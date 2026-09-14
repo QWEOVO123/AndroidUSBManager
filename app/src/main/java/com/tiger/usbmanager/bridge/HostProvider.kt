@@ -8,6 +8,8 @@ import android.os.Bundle
 import android.util.Log
 import com.tiger.usbmanager.ModuleConstants
 import com.tiger.usbmanager.ModuleSettings
+import com.tiger.usbmanager.auth.RecognitionSettings
+import com.tiger.usbmanager.auth.RootAuthManager
 
 /**
  * ContentProvider in the module app process, queried by system_server via
@@ -92,6 +94,17 @@ class HostProvider : ContentProvider() {
                 UsbBridgeContract.KEY_CHOOSER_WHILE_LOCKED,
                 ModuleSettings.chooserWhileLocked(),
             )
+            val authEnabled = RecognitionSettings.isEnabled(requireNotNull(context))
+            putBoolean(UsbBridgeContract.KEY_AUTH_ENABLED, authEnabled)
+            putString(UsbBridgeContract.KEY_AUTH_BACKEND, RecognitionSettings.backend(requireNotNull(context)))
+            putLong(UsbBridgeContract.KEY_AUTH_TRANSITION_UNTIL, RecognitionSettings.transitionUntil(requireNotNull(context)))
+            if (authEnabled) {
+                runCatching { RootAuthManager.prepare(requireNotNull(context)) }.getOrNull()?.let { paths ->
+                    putString(UsbBridgeContract.KEY_AUTH_SCRIPT, paths.script)
+                    putString(UsbBridgeContract.KEY_AUTH_APK, paths.apk)
+                    putString(UsbBridgeContract.KEY_AUTH_LIBRARY, paths.nativeLibrary)
+                }
+            }
         }
     }
 

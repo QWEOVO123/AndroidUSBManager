@@ -1,113 +1,86 @@
-# USBManager — Android USB management module
+# USBManager — Android USB Management Module
 
-An **LSPosed**-based Android system module that shows a USB chooser every time you plug into a computer, so you can decide on the spot which USB mode to use and whether to enable ADB.
+[中文](README.md)
 
-> The "device recognition + memory" feature has been removed. The ADB device side cannot reliably read the host computer's PID/VID, so different computers could be misidentified as the same one and incorrectly get another computer's configuration. This module no longer remembers any computer; it **prompts on every connection** instead.
+USBManager is an **LSPosed** system module for Android. When the phone is connected to a computer by cable, it displays a USB chooser so the user can select the USB mode and ADB state for that connection.
 
 ## Features
 
-* **Automatic connection detection**: hooks `UsbDeviceManager` (with the system `USB_STATE` broadcast as a fallback path) to detect when the phone connects to a computer as a USB device
+* **Automatic connection detection:** detects when the phone connects to a computer as a USB device.
+* **Per-connection mode selection:** supports Charge only, File transfer (MTP), Photo transfer (PTP), USB tethering (RNDIS), and MIDI.
+* **One-tap ADB control:** selects whether USB debugging is enabled for the current connection.
+* **No OTG prompts:** USB drives, keyboards, mice, and other peripherals connected while the phone acts as host remain under normal Android handling.
+* **ADB off on unplug:** optionally turns USB debugging off when the cable is removed.
+* **Lock-screen deferral:** waits until unlock by default, with an option to display the chooser while locked.
 
-* **Prompt on every connection**: shows the USB chooser every time, so you pick the mode and ADB state for this session — no memory, no auto-apply
+## Experimental Computer Recognition and Memory
 
-* **Multiple modes**: Charge only / File transfer (MTP) / Photo transfer (PTP) / USB tethering (RNDIS) / MIDI
+This feature allows the phone to recognize and remember trusted computers. It is disabled by default. While disabled, the USB chooser continues to appear for every computer connection.
 
-* **One-tap ADB**: decide in the chooser whether to enable USB debugging this time
+For first-time setup, open **Computer Recognition and Memory**, tap the detection button, and grant root when requested. Detection runs entirely on the phone and does not require a cable or computer. If root is not granted, the app asks for authorization.
 
-* **No chooser for OTG**: the phone acting as a USB host (OTG drives, keyboards, mice, etc.) does not prompt; it is recognized natively by the system and needs no ADB
+After detection succeeds, the feature can be enabled. For first-time pairing, tap **Allow one new computer to pair** on the phone. A successfully paired computer appears in the saved-computer list and can be removed at any time.
 
-* **ADB off on unplug**: automatically turns ADB off after unplugging (can be disabled), ensuring adbd stops
+On later cable connections, the phone verifies the computer automatically. A saved computer becomes available without another USB chooser. An unknown computer, a timeout, or a failed verification falls back to the normal chooser. An unknown computer cannot add itself to the trust list.
 
-* **Root fallback**: when framework APIs are unavailable, automatically tries `su` to write system properties (requires root)
+The current compatibility targets are AOSP, Google Android, and near-stock systems. The in-app result is authoritative because vendors may alter or restrict system USB behavior. Support cannot be inferred from an Android version or brand alone. The feature does not modify the phone kernel.
+
+Normal app startup and the standard USB chooser do not request root. Root is used only for the local capability check, recognition sessions after the feature is enabled, and saved-device management.
+
+This feature requires the **[USBManagerWinBackEnd](https://github.com/TigerSpirit217/USBManagerWinBackEnd)** Windows companion. Its application, instructions, and release files are provided by the corresponding project.
 
 ## Installation
 
-### Prerequisites
+### Requirements
 
-* A rooted Android device with an unlocked bootloader
-
-* **LSPosed** installed
-
-* Android 12+ (recommended) or 11
+* An Android device with an unlocked bootloader and root access.
+* **LSPosed**.
+* Android 11 or later; Android 12+ is recommended.
 
 ### Steps
 
-1. Download the latest APK from [Releases](../../releases)
-2. Install the APK on your device
-3. Open **LSPosed Manager** → Modules → enable **USBManager**
-4. **Scope**: tick `system` (system framework)
-5. Reboot the device
-6. Launch the USBManager app from the home screen to read the guide and module settings
+1. Download the latest APK from [Releases](../../releases).
+2. Install the APK.
+3. Enable **USBManager** in **LSPosed Manager → Modules**.
+4. Add system (the Android framework) to the module scope.
+5. Reboot the device.
+6. Open USBManager and verify that the module status is healthy.
 
 ## Usage
 
-1. Plug a USB cable into a computer
-2. The USB chooser appears every time (via a full-screen high-priority notification when locked / background-restricted)
-3. Choose the USB mode (Charge only / File transfer / Photo transfer / Tethering / MIDI) and the ADB toggle
-4. Tap "OK" to apply
+1. Connect the phone to a computer with a USB cable.
+2. Select a USB mode and the ADB state in the chooser.
+3. Tap **OK** to apply.
 
-## Defaults
-
-* Default USB mode: **Charge only**
-
-* Default: enable USB debugging: **off**
-
-* Turn ADB off on unplug: **on**
-
-* Show chooser while locked: **off** (deferred until unlock by default)
-
-These defaults can be changed from the USBManager app.
-
-> **Upgrade note**: after upgrading from an older version, the first launch clears previously saved device-recognition data (`usbmanager_hosts` and the system_server-side fallback copy) so leftover data cannot affect the new behavior.
+The defaults are Charge only, USB debugging off, ADB off on unplug enabled, and chooser display while locked disabled. These options are configurable on the main page.
 
 ## Building
 
-```bash
-# Clone the repository
-git clone https://github.com/your-username/USBManager.git
-cd USBManager
-
-# Build with Gradle
-./gradlew :app:assembleRelease
-```
+    git clone https://github.com/TigerSpirit217/USBManager.git
+    cd USBManager
+    ./gradlew :app:assembleRelease
 
 ## Debugging
 
-### Viewing logs
+Search for USBManager in LSPosed Manager logs, or run:
 
-Module logs are written to the `USBManager` tag. View them from LSPosed Manager:
+    adb logcat -s USBManager
 
-1. Open **LSPosed Manager**
-2. Tap **Logs** → search for **USBManager**
-3. Review the relevant logs
+Main log markers:
 
-Or use ADB logcat:
-
-```bash
-adb logcat -s USBManager
-```
-
-Key log tags:
-
-* `[WATCHER]` — USB event pipeline
-
-* `[RX]` — broadcast receiver
-
-* `[HOOK]` — hook initialization
-
-* `[CLIENT]` — ContentProvider communication
-
-* `[CONTROLLER]` — USB mode / ADB configuration application
+* **[WATCHER]**: USB connection and chooser flow.
+* **[AUTH]**: computer recognition.
+* **[RX]**: system broadcasts.
+* **[HOOK]**: module loading.
+* **[CLIENT]**: communication between the app and system module.
+* **[CONTROLLER]**: USB mode and ADB application.
 
 ## License
 
-This project is licensed under the Mulan Public License, version 2 (Mulan PubL v2).
-See [LICENSE](https://license.coscl.org.cn/MulanPubL-2.0) for the full text.
+This project is licensed under the Mulan Public License, version 2 (Mulan PubL v2). See [LICENSE](https://license.coscl.org.cn/MulanPubL-2.0) for the full license.
 
-## Source & Releases
+## Source and Releases
 
-* Source repository: <https://github.com/TigerSpirit217/USBManager>
-
+* Source: <https://github.com/TigerSpirit217/USBManager>
 * Releases: <https://github.com/TigerSpirit217/USBManager/releases>
-
 * Issues: <https://github.com/TigerSpirit217/USBManager/issues>

@@ -36,6 +36,12 @@ class HostProviderClient(context: Context) {
             defaultAdb = result?.getBoolean(UsbBridgeContract.KEY_ADB, false) ?: false,
             disconnectAutoOffAdb = result?.getBoolean(UsbBridgeContract.KEY_DISCONNECT_AUTO_OFF, true) ?: true,
             chooserWhileLocked = result?.getBoolean(UsbBridgeContract.KEY_CHOOSER_WHILE_LOCKED, false) ?: false,
+            authEnabled = result?.getBoolean(UsbBridgeContract.KEY_AUTH_ENABLED, false) ?: false,
+            authBackend = result?.getString(UsbBridgeContract.KEY_AUTH_BACKEND).orEmpty(),
+            authScript = result?.getString(UsbBridgeContract.KEY_AUTH_SCRIPT).orEmpty(),
+            authApk = result?.getString(UsbBridgeContract.KEY_AUTH_APK).orEmpty(),
+            authLibrary = result?.getString(UsbBridgeContract.KEY_AUTH_LIBRARY).orEmpty(),
+            authTransitionUntilMs = result?.getLong(UsbBridgeContract.KEY_AUTH_TRANSITION_UNTIL, 0L) ?: 0L,
         )
         Log.i(TAG, "[CLIENT] settings → $snap")
         return snap
@@ -99,4 +105,10 @@ data class ModuleSettingsSnapshot(
     val disconnectAutoOffAdb: Boolean,
     /** Whether the USB mode chooser may show while the device is locked. */
     val chooserWhileLocked: Boolean = false,
+    val authEnabled: Boolean = false,
+    val authBackend: String = "",
+    val authScript: String = "",
+    val authApk: String = "",
+    val authLibrary: String = "",
+    val authTransitionUntilMs: Long = 0L,
 )

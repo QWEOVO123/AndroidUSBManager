@@ -96,6 +96,7 @@ internal class UsbStateWatcher(
     // Until when a CONNECTED edge is treated as a re-enumeration caused by a config
     // change (mode/ADB toggle) rather than a fresh plug. See REENUM_SUPPRESS_MS.
     @Volatile private var suppressConnectUntilMs: Long = 0L
+    @Volatile private var authTransitionUntilMs: Long = 0L
 
     // ---- Lock-deferral of the chooser (setting chooserWhileLocked=false) ----
     // When the USB mode chooser can't be shown while locked, we remember the pending
@@ -150,6 +151,8 @@ internal class UsbStateWatcher(
          *  reset that the kernel reports as DISCONNECTED → CONNECTED; without this the
          *  user sees the chooser flash again right after confirming. */
         private const val REENUM_SUPPRESS_MS = 3_000L
+        private const val AUTH_REENUM_SUPPRESS_MS = 30_000L
+        private const val AUTH_SESSION_TIMEOUT_MS = 55_000L
 
         /** Interval (ms) at which we re-check whether the keyguard is unlocked while a
          *  chooser is deferred. Must be short enough to feel instant after unlocking. */
@@ -186,7 +189,11 @@ internal class UsbStateWatcher(
         handler.post {
             val now = System.currentTimeMillis()
             lastAppliedAtMs = now
-            suppressConnectUntilMs = now + REENUM_SUPPRESS_MS
+            val settings = runCatching { hostClient.settings() }
+                .onFailure { env.warn("[AUTH] settings lookup after chooser failed", it) }
+                .getOrDefault(ModuleSettingsSnapshot(UsbMode.CHARGING, false, true))
+            suppressConnectUntilMs =
+                now + if (settings.authEnabled) AUTH_REENUM_SUPPRESS_MS else REENUM_SUPPRESS_MS
         }
     }
 
@@ -262,6 +269,21 @@ internal class UsbStateWatcher(
         val settings: ModuleSettingsSnapshot = runCatching { hostClient.settings() }
             .onFailure { env.warn("[WATCHER] settings lookup failed; using defaults", it) }
             .getOrDefault(ModuleSettingsSnapshot(UsbMode.CHARGING, false, true))
+        if (now < settings.authTransitionUntilMs) {
+            authTransitionUntilMs = maxOf(authTransitionUntilMs, settings.authTransitionUntilMs)
+            suppressConnectUntilMs = maxOf(suppressConnectUntilMs, settings.authTransitionUntilMs)
+            env.info("[AUTH] suppressing chooser during app-requested gadget transition")
+            return
+        }
+        if (settings.authEnabled) {
+            authTransitionUntilMs = now + AUTH_SESSION_TIMEOUT_MS
+            suppressConnectUntilMs = authTransitionUntilMs
+            env.info("[AUTH] authenticating computer before deciding whether to show chooser")
+            UsbAuthRuntime.start(env, settings) { outcome ->
+                handler.post { handleAuthenticationResult(ctx, settings, outcome) }
+            }
+            return
+        }
         env.info("[WATCHER] → ASK user preselect=${settings.defaultMode} adb=${settings.defaultAdb}")
 
         val request = ChooserRequest(mode = settings.defaultMode, adb = settings.defaultAdb)
@@ -270,6 +292,32 @@ internal class UsbStateWatcher(
             deferChooserUntilUnlock(ctx, request)
         } else {
             launchChooser(ctx, request)
+        }
+    }
+
+    private fun handleAuthenticationResult(
+        ctx: Context,
+        settings: ModuleSettingsSnapshot,
+        outcome: UsbAuthRuntime.Outcome,
+    ) {
+        val now = System.currentTimeMillis()
+        authTransitionUntilMs = now + REENUM_SUPPRESS_MS
+        suppressConnectUntilMs = authTransitionUntilMs
+        when (outcome) {
+            is UsbAuthRuntime.Outcome.Known -> {
+                // A trusted computer is already on MTP + ADB + Authenticate.
+                // Keeping this composition avoids a second USB reset.
+                env.info("[AUTH] known computer id=${outcome.id.take(12)} label=${outcome.label}; keeping triple channel")
+            }
+            else -> {
+                env.info("[AUTH] computer not trusted ($outcome); showing normal USB chooser")
+                val request = ChooserRequest(settings.defaultMode, settings.defaultAdb)
+                if (shouldDeferChooserForLock(ctx, settings)) {
+                    deferChooserUntilUnlock(ctx, request)
+                } else {
+                    launchChooser(ctx, request)
+                }
+            }
         }
     }
 
@@ -359,6 +407,18 @@ internal class UsbStateWatcher(
             .onFailure { env.warn("[WATCHER] hostClient.settings lookup failed; using defaults", it) }
             .getOrDefault(ModuleSettingsSnapshot(UsbMode.CHARGING, false, true))
         env.info("[WATCHER] settings: defaultMode=${settings.defaultMode} defaultAdb=${settings.defaultAdb} disconnectAutoOffAdb=${settings.disconnectAutoOffAdb}")
+
+        val transitionUntil = maxOf(authTransitionUntilMs, settings.authTransitionUntilMs)
+        if (System.currentTimeMillis() < transitionUntil) {
+            authTransitionUntilMs = transitionUntil
+            suppressConnectUntilMs = maxOf(suppressConnectUntilMs, transitionUntil)
+            env.info("[AUTH] ignoring disconnect edge during gadget transition")
+            handler.postDelayed({
+                if (!lastConnected) handleDisconnect()
+            }, (transitionUntil - System.currentTimeMillis()).coerceAtLeast(0L) + 50L)
+            return
+        }
+        UsbAuthRuntime.restore(env, settings)
 
         // Honor the "拔线自动关ADB" setting unconditionally on a real cable unplug.
         // There is deliberately NO grace/"ADB just turned on" exemption here: the

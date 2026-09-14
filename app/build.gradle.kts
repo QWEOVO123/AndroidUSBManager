@@ -8,13 +8,22 @@ android {
     namespace = "com.tiger.usbmanager"
     compileSdk = 37
     buildToolsVersion = "37.0.0"
+    ndkVersion = "27.2.12479018"
 
     defaultConfig {
         applicationId = "com.tiger.usbmanager"
         minSdk = 26
         targetSdk = 37
-        versionCode = 4
-        versionName = "4"
+        versionCode = 5
+        versionName = "5"
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
+        externalNativeBuild {
+            ndkBuild {
+                arguments += "NDK_APPLICATION_MK:=src/main/jni/Application.mk"
+            }
+        }
     }
 
     buildTypes {
@@ -30,6 +39,7 @@ android {
     }
 
     packaging {
+        jniLibs.useLegacyPackaging = true
         resources {
             excludes += setOf(
                 "META-INF/*.version",
@@ -41,6 +51,12 @@ android {
                 "kotlin/**",
                 "DebugProbesKt.bin",
             )
+        }
+    }
+
+    externalNativeBuild {
+        ndkBuild {
+            path = file("src/main/jni/Android.mk")
         }
     }
 
