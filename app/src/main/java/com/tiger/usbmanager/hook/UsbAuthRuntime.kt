@@ -1,6 +1,7 @@
 package com.tiger.usbmanager.hook
 
 import android.util.Base64
+import com.tiger.usbmanager.policy.UsbMode
 import com.tiger.usbmanager.bridge.ModuleSettingsSnapshot
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
@@ -8,7 +9,7 @@ import java.util.concurrent.TimeUnit
 /** Runs the root USB authentication session and reports its authenticated result. */
 internal object UsbAuthRuntime {
     sealed interface Outcome {
-        data class Known(val id: String, val label: String) : Outcome
+        data class Known(val id: String, val label: String, val mode: UsbMode?, val adb: Boolean) : Outcome
         data class Unknown(val id: String, val label: String) : Outcome
         data object Timeout : Outcome
         data class Failed(val detail: String) : Outcome
@@ -32,7 +33,7 @@ internal object UsbAuthRuntime {
                 val stderr = drain(process.errorStream)
                 stdout.start()
                 stderr.start()
-                val finished = process.waitFor(50, TimeUnit.SECONDS)
+                val finished = process.waitFor(80, TimeUnit.SECONDS)
                 if (!finished) {
                     process.destroy()
                     process.waitFor(500, TimeUnit.MILLISECONDS)
@@ -71,12 +72,12 @@ internal object UsbAuthRuntime {
             ?: return if (finished) Outcome.Failed(output.takeLast(240)) else Outcome.Timeout
         if (value == "TIMEOUT") return Outcome.Timeout
         val fields = value.split('|')
-        if (fields.size != 3) return Outcome.Failed(value)
+        if (fields.size != 5 || !fields[1].matches(Regex("[0-9a-f]{64}"))) return Outcome.Failed(value)
         val label = runCatching {
             String(Base64.decode(fields[2], Base64.DEFAULT), StandardCharsets.UTF_8)
         }.getOrDefault("")
         return when (fields[0]) {
-            "KNOWN", "PAIRED" -> Outcome.Known(fields[1], label)
+            "KNOWN", "PAIRED" -> Outcome.Known(fields[1], label, UsbMode.entries.firstOrNull { it.wireValue == fields[3] }, fields[4] == "true")
             "UNKNOWN" -> Outcome.Unknown(fields[1], label)
             else -> Outcome.Failed(value)
         }

@@ -7,6 +7,10 @@ import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.*
 import com.tiger.usbmanager.R
+import com.tiger.usbmanager.ModuleSettings
+import com.tiger.usbmanager.auth.KnownComputer
+import com.tiger.usbmanager.policy.UsbMode
+import android.text.InputFilter
 import com.tiger.usbmanager.auth.RecognitionSettings
 import com.tiger.usbmanager.auth.RootAuthManager
 import java.text.DateFormat
@@ -69,7 +73,7 @@ class UsbAuthenticationActivity : Activity() {
             if (RecognitionSettings.isEnabled(this)) {
                 content.addView(Button(this).apply {
                     text = getString(R.string.auth_allow_pair)
-                    setOnClickListener { runPairingWindow() }
+                    setOnClickListener { editComputer(null) }
                     layoutParams = margins(dp(8))
                 })
                 content.addView(TextView(this).apply {
@@ -106,41 +110,71 @@ class UsbAuthenticationActivity : Activity() {
         }.apply { name = "usb-auth-detection"; start() }
     }
 
-    private fun runPairingWindow() {
+    private fun editComputer(computer: KnownComputer?) {
+        val form = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(8), dp(24), dp(8))
+        }
+        val name = EditText(this).apply {
+            hint = getString(R.string.auth_computer_name)
+            setSingleLine(true)
+            filters = arrayOf(InputFilter.LengthFilter(64))
+            setText(computer?.label.orEmpty())
+        }
+        val mode = Spinner(this).apply {
+            adapter = ArrayAdapter(this@UsbAuthenticationActivity, android.R.layout.simple_spinner_dropdown_item,
+                UsbMode.entries.map { getString(it.displayRes) })
+            setSelection((computer?.mode ?: UsbMode.fromWire(ModuleSettings.defaultMode())).ordinal)
+        }
+        val adb = CheckBox(this).apply {
+            text = "ADB"
+            isChecked = computer?.adb ?: ModuleSettings.defaultAdb()
+        }
+        form.addView(name); form.addView(mode); form.addView(adb)
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(if (computer == null) R.string.auth_allow_pair else R.string.auth_edit)
+            .setView(form)
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .setPositiveButton(R.string.auth_save, null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val label = name.text.toString().trim()
+                if (label.isEmpty() || label.any { it.isISOControl() }) {
+                    name.error = getString(R.string.auth_name_required)
+                    return@setOnClickListener
+                }
+                val selectedMode = UsbMode.entries[mode.selectedItemPosition]
+                val selectedAdb = adb.isChecked
+                dialog.dismiss()
+                if (computer == null) runPairingWindow(label, selectedMode, selectedAdb)
+                else {
+                    showBusy(getString(R.string.auth_saving))
+                    Thread {
+                        val ok = runCatching { RootAuthManager.update(this, computer.id, label, selectedMode, selectedAdb) }.getOrDefault(false)
+                        runOnUiThread { render(getString(if (ok) R.string.auth_saved else R.string.auth_save_failed)) }
+                    }.start()
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun runPairingWindow(label: String, mode: UsbMode, adb: Boolean) {
         showBusy(getString(R.string.auth_pair_starting))
         Thread {
-            val startedAt = System.currentTimeMillis()
-            val ok = runCatching { RootAuthManager.start(this, true) }.getOrDefault(false)
-            var paired = false
-            if (ok) {
-                // STARTED means that Windows can now see the interface. The crypto
-                // handshake completes a moment later, so wait briefly for its durable
-                // host record instead of rendering an empty list immediately.
-                for (attempt in 0 until 20) {
-                    paired = runCatching {
-                        RootAuthManager.list(this).any { it.lastSeen >= startedAt }
-                    }.getOrDefault(false)
-                    if (paired) break
-                    Thread.sleep(500)
-                }
-            }
-            runOnUiThread {
-                val message = when {
-                    !ok -> R.string.auth_pair_failed
-                    paired -> R.string.auth_pair_success
-                    else -> R.string.auth_pair_ready
-                }
-                render(getString(message))
-            }
+            val ok = runCatching { RootAuthManager.start(this, label, mode, adb) }.getOrDefault(false)
+            runOnUiThread { render(getString(if (ok) R.string.auth_pair_success else R.string.auth_pair_failed)) }
         }.apply { name = "usb-auth-pair"; start() }
     }
 
     private fun loadKnownComputers() {
         val progress = ProgressBar(this)
-        content.addView(progress)
+        val target = content
+        target.addView(progress)
         Thread {
             val computers = runCatching { RootAuthManager.list(this) }.getOrDefault(emptyList())
             runOnUiThread {
+                if (content !== target || isFinishing || isDestroyed) return@runOnUiThread
                 content.removeView(progress)
                 if (computers.isEmpty()) {
                     content.addView(TextView(this).apply {
@@ -160,8 +194,13 @@ class UsbAuthenticationActivity : Activity() {
                                 DateFormat.getDateTimeInstance().format(Date(computer.lastSeen)),
                                 computer.id.take(12),
                             )
+                            append("\n" + (computer.mode?.let { getString(it.displayRes) } ?: getString(R.string.auth_config_missing)) + if (computer.adb) " + ADB" else "")
                             setTextColor(getColor(R.color.text_body))
                             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                        })
+                        addView(Button(this@UsbAuthenticationActivity).apply {
+                            text = getString(R.string.auth_edit)
+                            setOnClickListener { editComputer(computer) }
                         })
                         addView(Button(this@UsbAuthenticationActivity).apply {
                             text = getString(R.string.auth_delete)
@@ -171,8 +210,8 @@ class UsbAuthenticationActivity : Activity() {
                                     .setNegativeButton(R.string.dialog_cancel, null)
                                     .setPositiveButton(R.string.auth_delete) { _, _ ->
                                         Thread {
-                                            RootAuthManager.delete(this@UsbAuthenticationActivity, computer.id)
-                                            runOnUiThread { render() }
+                                            val ok = runCatching { RootAuthManager.delete(this@UsbAuthenticationActivity, computer.id) }.getOrDefault(false)
+                                            runOnUiThread { render(if (ok) null else getString(R.string.auth_save_failed)) }
                                         }.start()
                                     }.show()
                             }

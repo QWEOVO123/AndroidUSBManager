@@ -6,6 +6,7 @@ APK=${2:-}
 LIB=${3:-}
 MODE=${4:-closed}
 BACKEND=${5:-none}
+PROFILE=${6:-none}
 ROOT=/data/adb/usbmanager-auth
 HOSTS=$ROOT/hosts
 RUN=$ROOT/session
@@ -23,7 +24,7 @@ DAEMON_CLASS=com.tiger.usbmanager.auth.UsbAuthDaemon
 # Being able to list /data/adb does not prove that a bind mount will be visible
 # to an init-managed HAL. Always re-enter its global mount namespace once when
 # ksud is present; Magisk and ordinary KernelSU continue directly.
-if [ "${USBMANAGER_GLOBAL:-0}" != 1 ] && [ -x /data/adb/ksud ] && [ "$ACTION" != list ] && [ "$ACTION" != delete ]; then
+if [ "${USBMANAGER_GLOBAL:-0}" != 1 ] && [ -x /data/adb/ksud ] && [ "$ACTION" != list ] && [ "$ACTION" != delete ] && [ "$ACTION" != edit ]; then
     OUTER_ADB=$(settings get global adb_enabled 2>/dev/null || echo 0)
     OUTER_FUNCTIONS=$(svc usb getFunctions 2>/dev/null || echo none)
     if [ "$ACTION" = start ] && [ "$BACKEND" = nothing_qxr ]; then
@@ -36,8 +37,8 @@ if [ "${USBMANAGER_GLOBAL:-0}" != 1 ] && [ -x /data/adb/ksud ] && [ "$ACTION" !=
         esac
     fi
     STATUS=0
-    OUTPUT=$(printf 'USBMANAGER_GLOBAL=1 USBMANAGER_PARENT_ADB=%s sh %s %s %s %s %s %s\nexit\n' \
-        "$OUTER_ADB" "$0" "$ACTION" "$APK" "$LIB" "$MODE" "$BACKEND" | /data/adb/ksud debug su -g) || STATUS=$?
+    OUTPUT=$(printf 'USBMANAGER_GLOBAL=1 USBMANAGER_PARENT_ADB=%s sh %s %s %s %s %s %s %s\nexit\n' \
+        "$OUTER_ADB" "$0" "$ACTION" "$APK" "$LIB" "$MODE" "$BACKEND" "$PROFILE" | /data/adb/ksud debug su -g) || STATUS=$?
     printf '%s\n' "$OUTPUT"
     RESTORE_LINE=$(printf '%s\n' "$OUTPUT" | grep '^FRAMEWORK_RESTORE ' | tail -n 1 || true)
     if [ -n "$RESTORE_LINE" ]; then
@@ -69,7 +70,7 @@ daemon_start() {
     LOG=$3
     RESULT=$4
     rm -f "$RESULT" "$RESULT.tmp"
-    CLASSPATH="$APK" app_process /system/bin "$DAEMON_CLASS" "$LIB" "$MOUNT" "$HOSTS" "$PAIR" "$RESULT" > "$LOG" 2>&1 &
+    CLASSPATH="$APK" app_process /system/bin "$DAEMON_CLASS" "$LIB" "$MOUNT" "$HOSTS" "$PAIR" "$RESULT" "$PROFILE" > "$LOG" 2>&1 &
     DAEMON=$!
     for i in 1 2 3 4 5; do grep -q '^READY ' "$LOG" && return 0; sleep 1; done
     return 1
@@ -126,7 +127,7 @@ generic_probe() {
         return 1
     fi
     rm -rf "$RUN"; save_state || return 1
-    trap 'restore' EXIT
+    trap 'restore; release_operation' EXIT
     RESULT=0
     generic_prepare || RESULT=$?
     restore
@@ -259,6 +260,28 @@ restore() {
     rm -rf "$RUN"
 }
 
+release_operation() {
+    rm -f "$ROOT/operation.lock/pid"
+    rmdir "$ROOT/operation.lock" 2>/dev/null || true
+}
+
+case "$ACTION" in
+  start|restore|edit|delete)
+    if ! mkdir "$ROOT/operation.lock" 2>/dev/null; then
+        OWNER=$(cat "$ROOT/operation.lock/pid" 2>/dev/null || true)
+        case "$OWNER" in
+          ''|*[!0-9]*) echo BUSY; exit 4 ;;
+        esac
+        if kill -0 "$OWNER" 2>/dev/null; then echo BUSY; exit 4; fi
+        rm -f "$ROOT/operation.lock/pid"
+        rmdir "$ROOT/operation.lock" 2>/dev/null || true
+        mkdir "$ROOT/operation.lock" 2>/dev/null || { echo BUSY; exit 4; }
+    fi
+    echo $$ > "$ROOT/operation.lock/pid"
+    trap 'release_operation' EXIT
+    ;;
+esac
+
 case "$ACTION" in
   detect)
     set +e
@@ -278,7 +301,7 @@ case "$ACTION" in
     rm -rf "$RUN"; save_state
     : > "$ROOT/last-session.log"
     trace "start requested mode=$MODE backend=$BACKEND saved_adb=$(cat "$RUN/adb") saved_functions=$(cat "$RUN/functions")"
-    trap 'restore' EXIT
+    trap 'restore; release_operation' EXIT
     touch "$RUN/watchdog.armed"
     nohup sh -c 'sleep 120; R=/data/adb/usbmanager-auth/session; [ -e "$R/watchdog.armed" ] && sh "$R/script" restore "$(cat "$R/apk")" "$(cat "$R/lib")"' > "$RUN/watchdog.log" 2>&1 < /dev/null &
     cp "$0" "$RUN/script"; echo "$APK" > "$RUN/apk"; echo "$LIB" > "$RUN/lib"
@@ -290,26 +313,53 @@ case "$ACTION" in
         echo 'unsupported saved backend' >&2
         exit 3
     fi
-    rm -f "$RUN/watchdog.armed"
-    trap - EXIT
     echo STARTED
-    if [ "$MODE" = closed ]; then
-        for i in $(seq 1 20); do
-            if [ -s "$RUN/auth-result" ]; then
-                printf 'AUTH_RESULT '
-                cat "$RUN/auth-result"
-                exit 0
+    AUTH_RESULT=TIMEOUT
+    ATTEMPTS=20
+    [ "$MODE" != pair ] || ATTEMPTS=120
+    for i in $(seq 1 "$ATTEMPTS"); do
+        if [ -s "$RUN/auth-result" ]; then
+            AUTH_RESULT=$(cat "$RUN/auth-result")
+            if [ "$MODE" = pair ]; then
+                case "$AUTH_RESULT" in
+                  PAIRED\|*|KNOWN\|*) ;;
+                  *) AUTH_RESULT=TIMEOUT; sleep 0.5; continue ;;
+                esac
             fi
+            # Give nativeSend time to deliver the encrypted response before teardown.
             sleep 0.5
-        done
-        echo 'AUTH_RESULT TIMEOUT'
-    fi
+            break
+        fi
+        sleep 0.5
+    done
+    restore
+    trap 'release_operation' EXIT
+    # Pairing also applies its durable profile before reporting completion.
+    case "$AUTH_RESULT" in
+      PAIRED\|*|KNOWN\|*)
+        if [ "$MODE" = pair ]; then
+            APPLY_MODE=$(printf '%s' "$AUTH_RESULT" | cut -d '|' -f 4)
+            APPLY_ADB=$(printf '%s' "$AUTH_RESULT" | cut -d '|' -f 5)
+            case "$APPLY_MODE:$APPLY_ADB" in
+              none:true|none:false|mtp:true|mtp:false|ptp:true|ptp:false|rndis:true|rndis:false|midi:true|midi:false)
+                if [ "$APPLY_ADB" = true ]; then settings put global adb_enabled 1; else settings put global adb_enabled 0; fi
+                [ "$APPLY_MODE" != none ] || APPLY_MODE=''
+                svc usb setFunctions "$APPLY_MODE"
+                ;;
+            esac
+        fi
+        ;;
+    esac
+    printf 'AUTH_RESULT %s\n' "$AUTH_RESULT"
     ;;
   restore)
     restore
     ;;
   list)
-    for file in "$HOSTS"/*.entry; do [ -f "$file" ] && cat "$file"; done
+    CLASSPATH="$APK" app_process /system/bin "$DAEMON_CLASS" list "$HOSTS"
+    ;;
+  edit)
+    CLASSPATH="$APK" app_process /system/bin "$DAEMON_CLASS" edit "$HOSTS" "$MODE" "$PROFILE"
     ;;
   delete)
     ID=$MODE
@@ -318,7 +368,7 @@ case "$ACTION" in
     echo DELETED
     ;;
   *)
-    echo 'usage: usb_auth_root.sh detect|start|restore|list|delete' >&2
+    echo 'usage: usb_auth_root.sh detect|start|restore|list|edit|delete' >&2
     exit 2
     ;;
 esac

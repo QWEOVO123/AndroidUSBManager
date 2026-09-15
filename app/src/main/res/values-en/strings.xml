@@ -41,10 +41,10 @@
     <string name="auth_supported">Computer identification is available</string>
     <string name="auth_enable">Enable computer identification</string>
     <string name="auth_allow_pair">Allow one new computer</string>
-    <string name="auth_pair_starting">Opening a one-time pairing window…</string>
+    <string name="auth_pair_starting">Pairing: keep the cable connected and the Windows companion running (up to 60 seconds after the interface is ready)…</string>
     <string name="auth_pair_ready">Pairing is ready. Keep USB connected and start the Windows backend.</string>
-    <string name="auth_pair_success">Computer paired, saved, and ready for automatic recognition.</string>
-    <string name="auth_pair_failed">Could not start pairing. Check USB, root access, and the cable.</string>
+    <string name="auth_pair_success">Computer paired; name and configuration saved.</string>
+    <string name="auth_pair_failed">Pairing did not complete. Check the Windows companion, cable and root access, then retry.</string>
     <string name="auth_saved_title">Saved computers</string>
     <string name="auth_saved_empty">No computers saved yet.</string>
     <string name="auth_saved_item">%1$s\nLast seen: %2$s\nID: %3$s…</string>
@@ -88,4 +88,12 @@
     <string name="notification_channel_desc">Shows a chooser when USB is plugged in</string>
     <string name="chooser_notification_title">USB connected</string>
     <string name="chooser_notification_text">Tap to choose USB mode and ADB.</string>
+    <string name="auth_edit">Edit</string>
+    <string name="auth_save">Save</string>
+    <string name="auth_computer_name">Computer name</string>
+    <string name="auth_name_required">Enter a valid computer name</string>
+    <string name="auth_saving">Saving…</string>
+    <string name="auth_saved">Saved. The new configuration applies on the next recognition.</string>
+    <string name="auth_save_failed">Could not save. Check root access and try again.</string>
+    <string name="auth_config_missing">Configuration not set</string>
 </resources>

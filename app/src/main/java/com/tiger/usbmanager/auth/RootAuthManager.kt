@@ -2,10 +2,11 @@ package com.tiger.usbmanager.auth
 
 import android.content.Context
 import android.util.Base64
+import com.tiger.usbmanager.policy.UsbMode
 import java.io.File
 import java.nio.charset.StandardCharsets
 
-data class KnownComputer(val id: String, val label: String, val lastSeen: Long)
+data class KnownComputer(val id: String, val label: String, val lastSeen: Long, val mode: UsbMode?, val adb: Boolean)
 
 /** The only app-process entry point that requests root for USB Authenticate. */
 object RootAuthManager {
@@ -52,20 +53,19 @@ object RootAuthManager {
         )
     }
 
-    fun start(context: Context, allowPair: Boolean): Boolean {
+    fun start(context: Context, label: String, mode: UsbMode, adb: Boolean): Boolean {
         if (!RecognitionSettings.isEnabled(context)) return false
-        RecognitionSettings.markTransition(context)
+        val encodedProfile = profile(label, mode, adb)
         val paths = prepare(context)
-        val result = runRoot(
-            paths,
-            "start",
-            if (allowPair) "pair" else "closed",
-            RecognitionSettings.backend(context),
-            60_000,
-        )
-        val started = result.output.lineSequence().any { it.trim() == "STARTED" }
-        if (!started) RecognitionSettings.clearTransition(context)
-        return started
+        RecognitionSettings.markTransition(context, 125_000L)
+        return try {
+            val result = runRoot(paths, "start", "pair", RecognitionSettings.backend(context), 120_000, encodedProfile)
+            result.output.lineSequence().any {
+                it.startsWith("AUTH_RESULT PAIRED|") || it.startsWith("AUTH_RESULT KNOWN|")
+            }
+        } finally {
+            RecognitionSettings.markTransition(context, 3_000L)
+        }
     }
 
     fun restore(context: Context): Boolean {
@@ -80,12 +80,14 @@ object RootAuthManager {
         val result = runRoot(paths, "list", "closed", RecognitionSettings.backend(context), 10_000)
         return result.output.lineSequence().mapNotNull { line ->
             val fields = line.trim().split('|')
-            if (fields.size != 3 || !fields[0].matches(Regex("[0-9a-f]{64}"))) return@mapNotNull null
+            if (fields.size != 5 || !fields[0].matches(Regex("[0-9a-f]{64}"))) return@mapNotNull null
             runCatching {
                 KnownComputer(
                     fields[0],
                     String(Base64.decode(fields[1], Base64.DEFAULT), StandardCharsets.UTF_8),
                     fields[2].toLong(),
+                    UsbMode.entries.firstOrNull { it.wireValue == fields[3] },
+                    fields[4] == "true",
                 )
             }.getOrNull()
         }.toList()
@@ -96,6 +98,18 @@ object RootAuthManager {
         val paths = prepare(context)
         val result = runRoot(paths, "delete", id, RecognitionSettings.backend(context), 10_000)
         return result.output.lineSequence().any { it.trim() == "DELETED" }
+    }
+
+    fun update(context: Context, id: String, label: String, mode: UsbMode, adb: Boolean): Boolean {
+        require(id.matches(Regex("[0-9a-f]{64}")))
+        return runRoot(prepare(context), "edit", id, RecognitionSettings.backend(context), 10_000,
+            profile(label, mode, adb)).output.lineSequence().any { it.trim() == "UPDATED" }
+    }
+
+    private fun profile(label: String, mode: UsbMode, adb: Boolean): String {
+        require(label.trim().isNotEmpty() && label.trim().length <= 64 && label.none { it.isISOControl() })
+        return Base64.encodeToString(label.trim().toByteArray(StandardCharsets.UTF_8), Base64.NO_WRAP) +
+            ",${mode.wireValue},$adb"
     }
 
     private data class Result(val code: Int, val output: String)
@@ -122,8 +136,8 @@ object RootAuthManager {
         }
     }
 
-    private fun runRoot(paths: Paths, action: String, mode: String, backend: String, timeoutMs: Long): Result {
-        val command = "sh ${paths.script} $action ${paths.apk} ${paths.nativeLibrary} $mode $backend"
+    private fun runRoot(paths: Paths, action: String, mode: String, backend: String, timeoutMs: Long, profile: String = "none"): Result {
+        val command = "sh ${paths.script} $action ${paths.apk} ${paths.nativeLibrary} $mode $backend $profile"
         val process = Runtime.getRuntime().exec(arrayOf("su", "-c", command))
         val output = StringBuilder()
         fun drain(stream: java.io.InputStream) = Thread {

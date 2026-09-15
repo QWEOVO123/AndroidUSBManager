@@ -87,27 +87,53 @@ public final class UsbAuthDaemon {
         return cipher.doFinal(clear);
     }
 
+    private static Properties readHost(Path file) throws IOException {
+        Properties p = new Properties();
+        try (InputStream input = Files.newInputStream(file)) { p.load(input); }
+        return p;
+    }
+
+    private static void setProfile(Properties p, String spec) {
+        String[] fields = spec.split(",", -1);
+        if (fields.length != 3 || !Arrays.asList("none", "mtp", "ptp", "rndis", "midi").contains(fields[1])
+                || !(fields[2].equals("true") || fields[2].equals("false"))) throw new IllegalArgumentException("profile");
+        String name = new String(unb64(fields[0]), StandardCharsets.UTF_8).trim();
+        if (name.isEmpty() || name.length() > 64 || name.chars().anyMatch(Character::isISOControl))
+            throw new IllegalArgumentException("name");
+        p.setProperty("label", name); p.setProperty("mode", fields[1]); p.setProperty("adb", fields[2]);
+    }
+
+    private static void saveHost(Path file, Properties p) throws IOException {
+        Path temp = file.resolveSibling(file.getFileName() + ".tmp");
+        try (FileOutputStream output = new FileOutputStream(temp.toFile())) {
+            p.store(output, "USBManager authenticated computer"); output.getFD().sync();
+        }
+        Files.move(temp, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    private static String profileFields(Properties p) {
+        return "|" + p.getProperty("mode", "") + "|" + p.getProperty("adb", "false");
+    }
+
     private static final class Session {
         private final Path hosts;
         private final Path result;
         private boolean allowPair;
+        private final String pairingProfile;
+        private Properties authenticated = new Properties();
         private String hostPublic, hostEphemeral, pcNonce, label;
         private byte[] transcript, sessionKey;
         private long issued;
 
-        Session(Path hosts, Path result, boolean allowPair) throws IOException {
+        Session(Path hosts, Path result, boolean allowPair, String pairingProfile) throws IOException {
+            this.pairingProfile = pairingProfile;
             this.hosts = hosts; this.result = result; this.allowPair = allowPair; Files.createDirectories(hosts);
         }
 
         void reset() { sessionKey = null; transcript = null; }
 
-        private void writeEntry(Path file, String id, String displayLabel) throws IOException {
-            String line = id + "|" + b64(displayLabel.getBytes(StandardCharsets.UTF_8)) + "|" + System.currentTimeMillis() + "\n";
-            Files.write(file, line.getBytes(StandardCharsets.US_ASCII), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-        }
-
         private void writeResult(String status, String id, String displayLabel) throws IOException {
-            String line = status + "|" + id + "|" + b64(displayLabel.getBytes(StandardCharsets.UTF_8)) + "\n";
+            String line = status + "|" + id + "|" + b64(displayLabel.getBytes(StandardCharsets.UTF_8)) + profileFields(authenticated) + "\n";
             Path temp = result.resolveSibling(result.getFileName() + ".tmp");
             Files.write(temp, line.getBytes(StandardCharsets.US_ASCII), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
             Files.move(temp, result, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
@@ -150,20 +176,23 @@ public final class UsbAuthDaemon {
                     Path file = hosts.resolve(id + ".properties");
                     String status;
                     if (Files.exists(file)) {
-                        writeEntry(hosts.resolve(id + ".entry"), id, label);
+                        authenticated = readHost(file);
+                        label = authenticated.getProperty("label", label);
+                        authenticated.setProperty("lastSeen", Long.toString(System.currentTimeMillis()));
+                        saveHost(file, authenticated);
                         status = "KNOWN " + id + " " + b64(label.getBytes(StandardCharsets.UTF_8));
                     }
                     else if (!action.equals("PAIR")) status = "UNKNOWN " + id;
                     else if (!allowPair) status = "ERROR PAIRING_CLOSED";
                     else {
                         Properties properties = new Properties();
-                        properties.setProperty("id", id); properties.setProperty("label", label);
+                        setProfile(properties, pairingProfile);
+                        properties.setProperty("id", id);
                         properties.setProperty("publicKey", hostPublic);
                         properties.setProperty("lastSeen", Long.toString(System.currentTimeMillis()));
-                        Path temp = hosts.resolve(id + ".tmp");
-                        try (FileOutputStream output = new FileOutputStream(temp.toFile())) { properties.store(output, "USBManager authenticated computer"); output.getFD().sync(); }
-                        Files.move(temp, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-                        writeEntry(hosts.resolve(id + ".entry"), id, label);
+                        saveHost(file, properties);
+                        authenticated = properties;
+                        label = properties.getProperty("label");
                         allowPair = false;
                         status = "PAIRED " + id + " " + b64(label.getBytes(StandardCharsets.UTF_8));
                     }
@@ -181,9 +210,25 @@ public final class UsbAuthDaemon {
     }
 
     public static void main(String[] args) throws Exception {
-        if (args.length != 5) throw new IllegalArgumentException("<native-lib> <ffs-mount> <host-dir> <pair|closed> <result-file>");
+        if (args.length >= 2 && args[0].equals("list")) {
+            try (DirectoryStream<Path> files = Files.newDirectoryStream(Paths.get(args[1]), "*.properties")) {
+                for (Path file : files) {
+                    Properties p = readHost(file);
+                    System.out.println(p.getProperty("id") + "|" + b64(p.getProperty("label", "Computer").getBytes(StandardCharsets.UTF_8))
+                            + "|" + p.getProperty("lastSeen", "0") + profileFields(p));
+                }
+            }
+            return;
+        }
+        if (args.length == 4 && args[0].equals("edit")) {
+            if (!args[2].matches("[0-9a-f]{64}")) throw new IllegalArgumentException("id");
+            Path file = Paths.get(args[1]).resolve(args[2] + ".properties");
+            Properties p = readHost(file); setProfile(p, args[3]); saveHost(file, p);
+            System.out.println("UPDATED"); return;
+        }
+        if (args.length != 6) throw new IllegalArgumentException("<native-lib> <ffs-mount> <host-dir> <pair|closed> <result-file> <profile>");
         System.load(args[0]);
-        Session session = new Session(Paths.get(args[2]), Paths.get(args[4]), args[3].equals("pair"));
+        Session session = new Session(Paths.get(args[2]), Paths.get(args[4]), args[3].equals("pair"), args[5]);
         nativeOpen(args[1], descriptors(), strings());
         System.out.println("READY " + INTERFACE_GUID); System.out.flush();
         long generation = nativeGeneration();

@@ -19,9 +19,9 @@ This feature allows the phone to recognize and remember trusted computers. It is
 
 For first-time setup, open **Computer Recognition and Memory**, tap the detection button, and grant root when requested. Detection runs entirely on the phone and does not require a cable or computer. If root is not granted, the app asks for authorization.
 
-After detection succeeds, the feature can be enabled. For first-time pairing, tap **Allow one new computer to pair** on the phone. A successfully paired computer appears in the saved-computer list and can be removed at any time.
+After detection succeeds, the feature can be enabled. For first-time pairing, tap **Allow one new computer to pair** on the phone. Enter a computer name and select its USB mode and ADB state (for example, MTP + ADB). Keep the cable connected and the Windows companion running; pairing remains available for about 60 seconds after the interface is ready. The name and configuration are stored together with the authenticated identity and applied after pairing. Saved computers can be renamed and reconfigured in the same Edit dialog, or removed.
 
-On later cable connections, the phone verifies the computer automatically. A saved computer becomes available without another USB chooser. An unknown computer, a timeout, or a failed verification falls back to the normal chooser. An unknown computer cannot add itself to the trust list.
+On later cable connections, the phone verifies the computer automatically. After authentication, the temporary recognition interface is restored to normal USB control and the saved USB mode and ADB state are applied without another chooser. Older records without a configuration continue to show the chooser until edited and saved. Edits take effect on the next recognition. An unknown computer, a timeout, or a failed verification falls back to the normal chooser. An unknown computer cannot add itself to the trust list.
 
 The current compatibility targets are AOSP, Google Android, and near-stock systems. The in-app result is authoritative because vendors may alter or restrict system USB behavior. Support cannot be inferred from an Android version or brand alone. The feature does not modify the phone kernel.
 
