@@ -62,8 +62,7 @@ internal object SystemServerHooks {
         val env = HookEnv(xposed, module, classLoader)
         env.info("[HOOK] install start; HookEnv constructed OK")
 
-        val rootFallback = RootFallback(env)
-        val controller = UsbController(env, rootFallback)
+        val controller = UsbController(env)
         val listenerHolder = DelegatingListener()
 
         runCatching {
@@ -103,10 +102,12 @@ internal object SystemServerHooks {
             }
         }
 
-        val rootOk = runCatching { rootFallback.isAvailable() }.getOrDefault(false)
-        env.info("[HOOK] install end; rootFallbackAvailable=$rootOk")
+        // Root is deliberately lazy. Merely loading the module must never open a
+        // superuser prompt; the experimental authentication page is the explicit
+        // opt-in entry point.
+        env.info("[HOOK] install end; root fallback remains lazy")
         module.log(Log.INFO, "USBManager",
-            "[HOOK] install EXIT; rootFallbackAvailable=$rootOk earlyContext=${earlyContext != null}")
+            "[HOOK] install EXIT; earlyContext=${earlyContext != null}")
     }
 
     private fun onContextReady(

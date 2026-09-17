@@ -30,6 +30,9 @@ object UsbBridgeContract {
 
     /** Atomically read + consume. Returns Bundle with KEY_RESULT JSON, or empty. */
     const val METHOD_GET_AND_CLEAR_PENDING_APPLY = "get_and_clear_pending_apply"
+    const val METHOD_START_AUTH = "start_auth"
+    const val METHOD_GET_AUTH_RESULT = "get_auth_result"
+    const val METHOD_CANCEL_AUTH = "cancel_auth"
 
     const val KEY_RESULT = "result"
     const val KEY_MODE = "mode"
@@ -37,8 +40,19 @@ object UsbBridgeContract {
     const val KEY_DISCONNECT_AUTO_OFF = "disconnect_auto_off"
     /** Whether the chooser may show while the device is locked. */
     const val KEY_CHOOSER_WHILE_LOCKED = "chooser_while_locked"
+    const val KEY_AUTH_ENABLED = "auth_enabled"
+    const val KEY_AUTH_BACKEND = "auth_backend"
+    const val KEY_AUTH_TRANSITION_UNTIL = "auth_transition_until"
     /** Full JSON of PendingApply payload, used by put/get methods above. */
     const val KEY_PENDING_JSON = "pending_json"
+    const val KEY_AUTH_SESSION = "auth_session"
+    const val KEY_AUTH_READY = "auth_ready"
+    const val KEY_AUTH_STATUS = "auth_status"
+    const val KEY_AUTH_ID = "auth_id"
+    const val KEY_AUTH_LABEL = "auth_label"
+    const val KEY_AUTH_MODE = "auth_mode"
+    const val KEY_AUTH_ADB = "auth_adb"
+    const val KEY_AUTH_DETAIL = "auth_detail"
 
     /** Bundle key carrying the shared BRIDGE_TOKEN on mutating provider calls. */
     const val KEY_BRIDGE_TOKEN = "bridge_token"

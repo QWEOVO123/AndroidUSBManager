@@ -92,13 +92,13 @@ internal class UsbDeviceManagerHook(
                         val state = chain.getArgs().firstOrNull() as? String
                         env.info("[USB] updateState fired: state=$state cls=${cls.simpleName} args=${chain.getArgs().joinToString { it.toString() }}")
                         if (state != null) {
-                            // Match exact state names; "CONFIGURED" must NOT be treated as connect.
+                            // CONFIGURED also proves a connection; some devices skip CONNECTED on quick replug.
                             when (state.uppercase()) {
                                 "DISCONNECTED" -> {
                                     env.info("[USB] → forwarding DISCONNECTED")
                                     listener.onUsbState(false)
                                 }
-                                "CONNECTED" -> {
+                                "CONNECTED", "CONFIGURED" -> {
                                     env.info("[USB] → forwarding CONNECTED")
                                     listener.onUsbState(true)
                                 }

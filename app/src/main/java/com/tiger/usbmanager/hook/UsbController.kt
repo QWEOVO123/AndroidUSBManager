@@ -14,16 +14,12 @@ import com.tiger.usbmanager.policy.UsbMode
  * Strategy is layered so that ROM differences degrade gracefully:
  *  1. Framework API: reflectively call [UsbDeviceManager.setCurrentFunctions].
  *  2. Public API: the deprecated [android.hardware.usb.UsbManager.setCurrentFunction].
- *  3. Root fallback: setprop persist.sys.usb.config + ctl start/stop adbd.
  *
  * ADB is always toggled through [Settings.Global.ADB_ENABLED] plus an adbd
  * ctl.start/stop, so that unplugging the cable reliably stops adbd (the user
  * requirement: ADB must be off after disconnect — not just the setting flipped).
  */
-internal class UsbController(
-    private val env: HookEnv,
-    private val rootFallback: RootFallback,
-) {
+internal class UsbController(private val env: HookEnv) {
 
     @Volatile private var usbDeviceManager: Any? = null
 
@@ -42,20 +38,13 @@ internal class UsbController(
      *  framework APIs. Callers use this boolean (instead of `runCatching.isSuccess`)
      *  to determine whether the configuration actually took effect — catching no
      *  exceptions does NOT mean the functions were applied, since several paths
-     *  silently return false (e.g. reflection lookup missed, root unavailable). */
+     *  silently return false (for example when reflection lookup misses). */
     fun applyConfig(mode: UsbMode, adb: Boolean): Boolean {
         env.info("applyConfig: mode=$mode adb=$adb")
         val modeOk = setUsbFunctions(mode, adb)
         val adbOk = setAdbEnabled(adb)
         env.info("applyConfig result: modeOk=$modeOk adbOk=$adbOk")
-        val rootOk: BooleanArray? = if (!modeOk || !adbOk) {
-            env.warn("Framework path incomplete; invoking root fallback")
-            rootFallback.applyConfig(mode, adb)
-        } else null
-        val effectiveModeOk = modeOk || (rootOk?.getOrNull(0) == true || rootOk?.getOrNull(1) == true)
-        val effectiveAdbOk = adbOk || ((rootOk?.getOrNull(2) ?: false) || (rootOk?.getOrNull(3) ?: false))
-        env.info("applyConfig effective: modeOk=$effectiveModeOk adbOk=$effectiveAdbOk (root fallback ran=${rootOk != null})")
-        return effectiveModeOk && effectiveAdbOk
+        return modeOk && adbOk
     }
 
     /** Sets the USB gadget functions. Returns true if a framework path succeeded.

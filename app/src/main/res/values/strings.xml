@@ -1,25 +1,25 @@
 <resources>
     <string name="app_name">USB 管理器</string>
-    <string name="xposed_description">基于 libxposed API 102 的 USB 管理模块，Hook system_server 实现每次连接电脑弹窗选择 USB 模式与 ADB 开关。</string>
+    <string name="xposed_description">基于 libxposed API 102 的 USB 管理模块，Hook system_server 实现连接电脑时弹窗选择 USB 模式与 ADB 开关。</string>
 
     <!-- MainActivity intro -->
     <string name="intro_module_info">当前版本：%1$s</string>
     <string name="intro_start">开始使用</string>
     <string name="intro_section_features">功能说明</string>
-    <string name="intro_feature_1">• USB 插入时自动检测连接事件（Hook UsbDeviceManager + 广播双路径）</string>
-    <string name="intro_feature_2">• 每次连接电脑都会弹出 USB 选择器对话框（后台启动受限则以通知全屏 Intent 弹出）</string>
+    <string name="intro_feature_1">• USB 插入时自动检测连接事件</string>
+    <string name="intro_feature_2">• 连接电脑将会弹出 USB 选择器对话框</string>
     <string name="intro_feature_3">• 可选模式：仅充电 / 文件传输 (MTP) / 图片传输 (PTP) / USB 网络共享 (RNDIS) / MIDI</string>
     <string name="intro_feature_4">• 可一键开启 USB 调试（ADB）</string>
-    <string name="intro_feature_5">• OTG 设备（手机作为 USB 主机）不弹窗，交由系统原生识别</string>
-    <string name="intro_feature_6">• 拔出数据线后自动关闭 ADB（可关闭该行为），确保 adbd 停止</string>
-    <string name="intro_feature_7">• 日志直接写入 LSPosed：打开 LSPosed Manager → 模块 → USBManager → ⋮ 菜单 → 查看日志</string>
+    <string name="intro_feature_5">• 手机作为 USB 主机连接 OTG 设备时交由系统原生识别，不弹窗</string>
+    <string name="intro_feature_6">• 拔出数据线后自动关闭 ADB（可关闭该行为）</string>
+    <string name="intro_feature_7">• 日志直接写入 LSPosed：请打开 LSPosed Manager查看日志</string>
     <string name="intro_section_usage">使用方法</string>
-    <string name="intro_usage_1">1. 在 LSPosed 中启用本模块，作用域勾选「system」(API 102 的 system_server 专用 scope)</string>
-    <string name="intro_usage_2">2. 点击顶部「模块已激活」自检确认 Hook 生效，否则重启手机或执行：adb shell killall system_server</string>
-    <string name="intro_usage_3">3. 用数据线连接电脑，每次都会弹出 USB 选择器（如锁屏/后台则通过高优先级通知全屏弹出）</string>
+    <string name="intro_usage_1">1. 在 LSPosed 中启用本模块，作用域勾选「system」，然后重启手机</string>
+    <string name="intro_usage_2">2. 查看顶部「模块已激活」自检确认 Hook 生效</string>
+    <string name="intro_usage_3">3. 用数据线连接电脑，将会弹出 USB 选择窗口</string>
     <string name="intro_usage_4">4. 选择 USB 模式与 ADB 开关，点击「确定」生效</string>
     <string name="intro_usage_5">5. 顶部状态卡片点击「重新检测」可再次检查模块激活状态</string>
-    <string name="intro_usage_6">6. 点击「获取日志方法」查看如何从 LSPosed 中导出完整 Hook 日志</string>
+    <string name="intro_usage_6">6. 点击「获取日志方法」查看如何从 LSPosed 中查阅完整 Hook 日志</string>
 
     <!-- MainActivity config manager / activation -->
     <string name="settings_view_intro">使用说明</string>
@@ -28,6 +28,29 @@
     <string name="settings_default_adb">默认开启 USB 调试</string>
     <string name="settings_disconnect_auto_off">拔线自动关闭 ADB</string>
     <string name="settings_chooser_while_locked">锁屏时也弹出选择窗口</string>
+    <string name="auth_section_title">实验性功能</string>
+    <string name="auth_entry_title">电脑识别与记忆</string>
+    <string name="auth_entry_value">设置 ›</string>
+    <string name="auth_page_title">电脑识别与记忆</string>
+    <string name="auth_usage">尝试验证此设备是否可以挂载独立 USB Authenticate 接口。请在 KernelSU 等 root 管理器中授予 root，然后点击检测。</string>
+    <string name="auth_detect">检测此设备</string>
+    <string name="auth_detecting">正在进行本地 USB 能力检测…</string>
+    <string name="auth_detect_root_required">请先授予 USB 管理器 root 权限，然后重新检测。</string>
+    <string name="auth_detect_pass">检测通过。此设备支持电脑识别与记忆功能。</string>
+    <string name="auth_detect_fail">检测未通过，此设备当前暂不支持该功能。</string>
+    <string name="auth_supported">此设备支持电脑识别与记忆功能</string>
+    <string name="auth_enable">启用电脑识别与记忆（实验性）</string>
+    <string name="auth_allow_pair">允许一台新电脑配对</string>
+    <string name="auth_pair_starting">正在配对，请保持数据线连接并运行电脑后端（接口就绪后等待最多 60 秒）…</string>
+    <string name="auth_pair_ready">配对窗口已打开。请保持数据线连接并确认电脑后端正在运行。</string>
+    <string name="auth_pair_success">电脑配对成功，请确认名称和配置。</string>
+    <string name="auth_pair_customize">配对成功：设置名称和配置</string>
+    <string name="auth_pair_failed">配对未完成，请检查电脑后端、数据线和 root 授权后重试。</string>
+    <string name="auth_saved_title">已保存的电脑</string>
+    <string name="auth_saved_empty">尚未保存电脑。</string>
+    <string name="auth_saved_item">%1$s\n最近识别：%2$s\nID：%3$s…</string>
+    <string name="auth_delete">移除</string>
+    <string name="auth_delete_confirm">移除已保存的电脑“%1$s”？移除后需再次在手机上确认配对。</string>
     <string name="activate_checking">正在检测模块激活状态…</string>
     <string name="activate_check_error">检测异常：%1$s</string>
     <string name="activate_state_active">✅ 模块已激活 (Hook 正常)</string>
@@ -42,7 +65,7 @@
     <string name="activation_guide_message">1. 打开 LSPosed 管理器（LSPosed Manager / Magisk 中的 LSPosed 入口）\n\n2. 进入「模块」页，找到「USB 管理器」，点进详情\n\n3. 打开右上角的启用开关\n\n4. 在「作用域」(Scope) 中，勾选「system」（system_server 专用 scope）\n\n5. 返回模块列表，选择「重启」(Reboot) 或在终端执行：\n   adb shell killall system_server\n\n重启完成后回到本应用点击「重新检测」，显示「模块已激活」即成功。\n\n如果仍不生效，请在 LSPosed Manager 中查看模块日志。</string>
     <string name="action_get_logs">获取日志方法</string>
     <string name="logs_how_to_title">获取 USBManager Hook 日志</string>
-    <string name="logs_how_to_message">1. 打开 LSPosed Manager（或 LSPosed 模块管理器）\n2. 进入「模块」标签页\n3. 找到 USBManager，点击进入详情页\n4. 点右上角 ⋮（更多）菜单\n5. 点「查看日志」→ 就可以看到完整的 Hook 日志，包括：\n     • 模块是否被注入 system_server\n     • 每次插入/拔出 USB 的事件\n     • 用户选择后 APPLY_USB_CONFIG 是否被收到\n     • 模式切换、ADB 开关是否成功执行\n\n【备选：命令行】\n  adb logcat -c &amp;&amp; adb logcat -s USBManager:V LSPosedFramework:V</string>
+    <string name="logs_how_to_message">1. 打开 LSPosed Manager\n2. 进入「日志」页面\n3. 点击上方搜索框，输入「USBManager」\n4. 即可看到完整的 Hook 日志，包括：\n     • 模块是否被注入 system_server\n     • 每次插入/拔出 USB 的事件\n     • 用户选择后 APPLY_USB_CONFIG 是否被收到\n     • 模式切换、ADB 开关是否成功执行\n\n【备选：命令行】\n  adb logcat -c &amp;&amp; adb logcat -s USBManager:V LSPosedFramework:V</string>
     <string name="dialog_got_it">知道了</string>
     <string name="dialog_cancel">取消</string>
 
@@ -66,4 +89,12 @@
     <string name="notification_channel_desc">USB 插入时弹出选择界面</string>
     <string name="chooser_notification_title">USB 连接</string>
     <string name="chooser_notification_text">点击选择 USB 模式与 ADB 开关。</string>
+    <string name="auth_edit">编辑</string>
+    <string name="auth_save">保存</string>
+    <string name="auth_computer_name">电脑名称</string>
+    <string name="auth_name_required">请输入有效的电脑名称</string>
+    <string name="auth_saving">正在保存…</string>
+    <string name="auth_saved">已保存，下次识别该电脑时应用新配置。</string>
+    <string name="auth_save_failed">保存失败，请检查 root 授权后重试。</string>
+    <string name="auth_config_missing">未设置配置</string>
 </resources>

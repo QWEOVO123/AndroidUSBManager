@@ -2,6 +2,7 @@ package com.tiger.usbmanager.ui
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -190,6 +191,16 @@ class MainActivity : Activity() {
         // Module settings section
         column.addView(sectionHeader(getString(R.string.settings_module_settings)))
         column.addView(settingsCard())
+        column.addView(sectionHeader(getString(R.string.auth_section_title)))
+        column.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(getColor(R.color.bg_card))
+            setPadding(dp(16), dp(6), dp(16), dp(6))
+            layoutParams = margin()
+            addView(row(getString(R.string.auth_entry_title), getString(R.string.auth_entry_value)) {
+                startActivity(Intent(this@MainActivity, UsbAuthenticationActivity::class.java))
+            })
+        })
 
         scroll.addView(column, ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,

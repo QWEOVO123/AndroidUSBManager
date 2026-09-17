@@ -24,6 +24,12 @@
 # 必须整体保留（含 INSTANCE 字段与 install 方法）。
 -keep class com.tiger.usbmanager.hook.SystemServerHooks { *; }
 
+# Launched by app_process from the root helper; native entry points use fixed JNI names.
+-keep class com.tiger.usbmanager.auth.UsbAuthDaemon { *; }
+-keepclasseswithmembernames,includedescriptorclasses class * {
+    native <methods>;
+}
+
 # ----------------------------------------------------------------------
 # Gson（跨进程 pending-apply 载荷）
 # ----------------------------------------------------------------------
