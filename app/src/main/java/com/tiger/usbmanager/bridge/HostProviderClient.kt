@@ -7,9 +7,8 @@ import com.tiger.usbmanager.ModuleConstants
 import com.tiger.usbmanager.policy.UsbMode
 
 /**
- * system_server-side client for [HostProvider]. The identification / "remember this
- * computer" database has been removed; what remains is the small read-only settings
- * snapshot and the pending-apply mailbox, both reached via [ContentResolver.call].
+ * system_server-side client for [HostProvider]. Settings, authentication sessions,
+ * and the pending-apply mailbox are reached through [ContentResolver.call].
  */
 class HostProviderClient(context: Context) {
 
@@ -25,6 +24,35 @@ class HostProviderClient(context: Context) {
         putString(UsbBridgeContract.KEY_BRIDGE_TOKEN, ModuleConstants.BRIDGE_TOKEN)
     }
 
+    fun startAuth(id: Long): Boolean {
+        val extras = tokenFor(Bundle().apply { putLong(UsbBridgeContract.KEY_AUTH_SESSION, id) })
+        return runCatching {
+            resolver.call(UsbBridgeContract.HOST_URI, UsbBridgeContract.METHOD_START_AUTH, null, extras)
+                ?.getBoolean(UsbBridgeContract.KEY_RESULT, false) == true
+        }.onFailure { Log.w(TAG, "[CLIENT] startAuth failed", it) }.getOrDefault(false)
+    }
+
+    /** Null means the worker is still authenticating this session. */
+    fun authResult(id: Long): ProviderAuthResult? {
+        val extras = tokenFor(Bundle().apply { putLong(UsbBridgeContract.KEY_AUTH_SESSION, id) })
+        val bundle = resolver.call(UsbBridgeContract.HOST_URI, UsbBridgeContract.METHOD_GET_AUTH_RESULT, null, extras)
+            ?: return null
+        if (!bundle.getBoolean(UsbBridgeContract.KEY_AUTH_READY, false)) return null
+        return ProviderAuthResult(
+            bundle.getString(UsbBridgeContract.KEY_AUTH_STATUS).orEmpty(),
+            bundle.getString(UsbBridgeContract.KEY_AUTH_ID).orEmpty(),
+            bundle.getString(UsbBridgeContract.KEY_AUTH_LABEL).orEmpty(),
+            UsbMode.entries.firstOrNull { it.wireValue == bundle.getString(UsbBridgeContract.KEY_AUTH_MODE) },
+            bundle.getBoolean(UsbBridgeContract.KEY_AUTH_ADB, false),
+            bundle.getString(UsbBridgeContract.KEY_AUTH_DETAIL).orEmpty(),
+        )
+    }
+
+    fun cancelAuth(id: Long) {
+        val extras = tokenFor(Bundle().apply { putLong(UsbBridgeContract.KEY_AUTH_SESSION, id) })
+        resolver.call(UsbBridgeContract.HOST_URI, UsbBridgeContract.METHOD_CANCEL_AUTH, null, extras)
+    }
+
     /** Full settings snapshot needed by system_server. */
     fun settings(): ModuleSettingsSnapshot {
         Log.v(TAG, "[CLIENT] settings() call")
@@ -38,9 +66,6 @@ class HostProviderClient(context: Context) {
             chooserWhileLocked = result?.getBoolean(UsbBridgeContract.KEY_CHOOSER_WHILE_LOCKED, false) ?: false,
             authEnabled = result?.getBoolean(UsbBridgeContract.KEY_AUTH_ENABLED, false) ?: false,
             authBackend = result?.getString(UsbBridgeContract.KEY_AUTH_BACKEND).orEmpty(),
-            authScript = result?.getString(UsbBridgeContract.KEY_AUTH_SCRIPT).orEmpty(),
-            authApk = result?.getString(UsbBridgeContract.KEY_AUTH_APK).orEmpty(),
-            authLibrary = result?.getString(UsbBridgeContract.KEY_AUTH_LIBRARY).orEmpty(),
             authTransitionUntilMs = result?.getLong(UsbBridgeContract.KEY_AUTH_TRANSITION_UNTIL, 0L) ?: 0L,
         )
         Log.i(TAG, "[CLIENT] settings → $snap")
@@ -86,6 +111,9 @@ class HostProviderClient(context: Context) {
     }
 }
 
+data class ProviderAuthResult(val status: String, val id: String, val label: String,
+                              val mode: UsbMode?, val adb: Boolean, val detail: String)
+
 /**
  * Full payload of the user's choice in the chooser, transported via the
  * ContentProvider pending-apply mailbox. Mirrors the extras of APPLY_USB_CONFIG
@@ -107,8 +135,5 @@ data class ModuleSettingsSnapshot(
     val chooserWhileLocked: Boolean = false,
     val authEnabled: Boolean = false,
     val authBackend: String = "",
-    val authScript: String = "",
-    val authApk: String = "",
-    val authLibrary: String = "",
     val authTransitionUntilMs: Long = 0L,
 )

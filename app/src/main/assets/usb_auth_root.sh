@@ -72,7 +72,46 @@ daemon_start() {
     rm -f "$RESULT" "$RESULT.tmp"
     CLASSPATH="$APK" app_process /system/bin "$DAEMON_CLASS" "$LIB" "$MOUNT" "$HOSTS" "$PAIR" "$RESULT" "$PROFILE" > "$LOG" 2>&1 &
     DAEMON=$!
-    for i in 1 2 3 4 5; do grep -q '^READY ' "$LOG" && return 0; sleep 1; done
+    # app_process normally becomes ready in well under a second. Polling once per
+    # second added a full second to every cable insertion on the common path.
+    for i in $(seq 1 30); do grep -q '^READY ' "$LOG" && return 0; sleep 0.1; done
+    return 1
+}
+
+standard_composition_ready() {
+    EXPECTED_DATA=$1
+    EXPECTED_ADB=$2
+    CURRENT_LINKS=$(ls -l /config/usb_gadget/g1/configs/b.1 2>/dev/null || true)
+    echo "$CURRENT_LINKS" | grep -q ffs.qxr && return 1
+    for FUNCTION in mtp ptp rndis midi accessory audio_source ncm; do
+        case ",$EXPECTED_DATA," in
+          *,$FUNCTION,*) echo "$CURRENT_LINKS" | grep -q "\.$FUNCTION" || return 1 ;;
+          *) echo "$CURRENT_LINKS" | grep -q "\.$FUNCTION" && return 1 ;;
+        esac
+    done
+    if [ "$EXPECTED_ADB" = 1 ]; then
+        echo "$CURRENT_LINKS" | grep -q ffs.adb || return 1
+    else
+        echo "$CURRENT_LINKS" | grep -q ffs.adb && return 1
+    fi
+    return 0
+}
+
+wait_standard_composition() {
+    EXPECTED_DATA=$1
+    EXPECTED_ADB=$2
+    LIMIT=$3
+    REQUIRED_STABLE=${4:-3}
+    STABLE=0
+    for i in $(seq 1 "$LIMIT"); do
+        if standard_composition_ready "$EXPECTED_DATA" "$EXPECTED_ADB"; then
+            STABLE=$((STABLE + 1))
+            [ "$STABLE" -lt "$REQUIRED_STABLE" ] || return 0
+        else
+            STABLE=0
+        fi
+        sleep 0.1
+    done
     return 1
 }
 
@@ -183,15 +222,18 @@ nothing_prepare() {
     daemon_start "$QXR" "$MODE" "$RUN/daemon.log" "$RUN/auth-result" || return 1
     trace "auth daemon ready pid=$DAEMON"
     echo "$DAEMON" > "$RUN/daemon.pid"
+    OLD_HAL_PID=$(pidof android.hardware.usb.gadget@1.2-service-qti 2>/dev/null || true)
     setprop ctl.restart vendor.usbgadget-hal-1-2
+    HAL_PID=''
     for i in $(seq 1 100); do
-        [ "$(getprop init.svc.vendor.usbgadget-hal-1-2)" = running ] && sleep 2 && break
+        HAL_PID=$(pidof android.hardware.usb.gadget@1.2-service-qti 2>/dev/null || true)
+        [ "$(getprop init.svc.vendor.usbgadget-hal-1-2)" = running ] && [ -n "$HAL_PID" ] && [ "$HAL_PID" != "$OLD_HAL_PID" ] && break
         sleep 0.1
     done
-    # UsbDeviceManager automatically reapplies its previous standard function
-    # when the HIDL service reconnects. Let that request settle first.
-    sleep 6
-    HAL_PID=$(pidof android.hardware.usb.gadget@1.2-service-qti 2>/dev/null || true)
+    [ -n "$HAL_PID" ] && [ "$HAL_PID" != "$OLD_HAL_PID" ] || return 1
+    # UsbDeviceManager reapplies MTP+ADB after the restarted HAL reconnects. Wait
+    # for the actual ConfigFS links to settle instead of sleeping six seconds.
+    wait_standard_composition mtp 1 50 10 || return 1
     HAL_ROWS=0
     [ -z "$HAL_PID" ] || HAL_ROWS=$(grep -c '^mtp,qxr,adb[[:space:]]' "/proc/$HAL_PID/root$CONF" 2>/dev/null || echo 0)
     HAL_MNT=unknown
@@ -246,7 +288,13 @@ restore() {
     setprop persist.vendor.usb.config.extra "$(cat "$RUN/extra")"
     setprop vendor.usb.config none
     svc usb setFunctions >/dev/null 2>&1 || true
-    sleep 1
+    # Wait until the temporary QXR link is actually gone before removing the
+    # patched composition table. This is normally faster than the old fixed 1 s.
+    for i in $(seq 1 30); do
+        LINKS=$(ls -l /config/usb_gadget/g1/configs/b.1 2>/dev/null || true)
+        echo "$LINKS" | grep -q ffs.qxr || break
+        sleep 0.1
+    done
     umount "$CONF" 2>/dev/null || true
     rm -rf "$MOUNT_STAGE"
     setprop vendor.usb.config "$(cat "$RUN/vendor-config")"
@@ -254,7 +302,10 @@ restore() {
     settings put global adb_enabled "$SAVED_ADB"
     svc usb setFunctions "$DATA_FUNCTIONS" >/dev/null 2>&1 || true
     if [ "$SAVED_ADB" = 1 ]; then setprop ctl.start adbd; else setprop ctl.stop adbd; fi
-    sleep 4
+    # Return as soon as the restored standard composition is stable. A fixed
+    # four-second delay kept both unknown and known computers waiting after the
+    # phone had already restored its USB functions.
+    wait_standard_composition "$DATA_FUNCTIONS" "$SAVED_ADB" 50 || true
     echo "FRAMEWORK_RESTORE $SAVED_ADB $SAVED_FUNCTIONS"
     trace "restore physical complete adb=$SAVED_ADB functions=$SAVED_FUNCTIONS"
     rm -rf "$RUN"

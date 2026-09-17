@@ -1,9 +1,8 @@
 package com.tiger.usbmanager.hook
 
-import android.util.Base64
 import com.tiger.usbmanager.policy.UsbMode
 import com.tiger.usbmanager.bridge.ModuleSettingsSnapshot
-import java.nio.charset.StandardCharsets
+import com.tiger.usbmanager.bridge.HostProviderClient
 import java.util.concurrent.TimeUnit
 
 /** Runs the root USB authentication session and reports its authenticated result. */
@@ -15,77 +14,38 @@ internal object UsbAuthRuntime {
         data class Failed(val detail: String) : Outcome
     }
 
-    fun start(env: HookEnv, settings: ModuleSettingsSnapshot, completed: (Outcome) -> Unit) {
-        if (!settings.authEnabled || !valid(settings)) return
+    fun start(env: HookEnv, client: HostProviderClient, settings: ModuleSettingsSnapshot,
+              session: Long, completed: (Outcome) -> Unit) {
+        if (!settings.authEnabled) {
+            completed(Outcome.Failed("Recognition disabled"))
+            return
+        }
         Thread {
             val outcome = runCatching {
-                val command = "sh ${settings.authScript} start ${settings.authApk} ${settings.authLibrary} closed ${settings.authBackend}"
-                val process = Runtime.getRuntime().exec(arrayOf("su", "-c", command))
-                val output = StringBuilder()
-                fun drain(stream: java.io.InputStream) = Thread {
-                    runCatching {
-                        stream.bufferedReader().useLines { lines ->
-                            lines.forEach { line -> synchronized(output) { output.appendLine(line) } }
-                        }
+                if (!client.startAuth(session)) return@runCatching Outcome.Failed("App root worker unavailable")
+                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(85)
+                while (System.nanoTime() < deadline) {
+                    val answer = client.authResult(session)
+                    if (answer != null) return@runCatching when (answer.status) {
+                        "KNOWN", "PAIRED" -> Outcome.Known(answer.id, answer.label, answer.mode, answer.adb)
+                        "UNKNOWN" -> Outcome.Unknown(answer.id, answer.label)
+                        "TIMEOUT" -> Outcome.Timeout
+                        else -> Outcome.Failed(answer.detail)
                     }
+                    Thread.sleep(500)
                 }
-                val stdout = drain(process.inputStream)
-                val stderr = drain(process.errorStream)
-                stdout.start()
-                stderr.start()
-                val finished = process.waitFor(80, TimeUnit.SECONDS)
-                if (!finished) {
-                    process.destroy()
-                    process.waitFor(500, TimeUnit.MILLISECONDS)
-                    if (process.isAlive) process.destroyForcibly()
-                }
-                runCatching { process.inputStream.close() }
-                runCatching { process.errorStream.close() }
-                stdout.join(1_000)
-                stderr.join(1_000)
-                val text = synchronized(output) { output.toString() }
-                parse(text, finished)
+                Outcome.Timeout
             }.getOrElse { Outcome.Failed(it.message.orEmpty()) }
             env.info("[AUTH] closed session outcome=$outcome")
             completed(outcome)
         }.apply { name = "usb-auth-start"; isDaemon = true; start() }
     }
 
-    fun restore(env: HookEnv, settings: ModuleSettingsSnapshot) {
-        if (!settings.authEnabled || !valid(settings)) return
+    fun cancel(env: HookEnv, client: HostProviderClient, session: Long) {
+        if (session == 0L) return
         Thread {
-            runCatching {
-                val command = "sh ${settings.authScript} restore ${settings.authApk} ${settings.authLibrary} closed ${settings.authBackend}"
-                val process = Runtime.getRuntime().exec(arrayOf("su", "-c", command))
-                val completed = process.waitFor(30, TimeUnit.SECONDS)
-                env.info("[AUTH] restore completed=$completed")
-                if (!completed) process.destroyForcibly()
-            }.onFailure { env.warn("[AUTH] restore failed", it) }
-        }.apply { name = "usb-auth-restore"; isDaemon = true; start() }
-    }
-
-    private fun parse(output: String, finished: Boolean): Outcome {
-        val value = output.lineSequence()
-            .firstOrNull { it.startsWith("AUTH_RESULT ") }
-            ?.removePrefix("AUTH_RESULT ")
-            ?.trim()
-            ?: return if (finished) Outcome.Failed(output.takeLast(240)) else Outcome.Timeout
-        if (value == "TIMEOUT") return Outcome.Timeout
-        val fields = value.split('|')
-        if (fields.size != 5 || !fields[1].matches(Regex("[0-9a-f]{64}"))) return Outcome.Failed(value)
-        val label = runCatching {
-            String(Base64.decode(fields[2], Base64.DEFAULT), StandardCharsets.UTF_8)
-        }.getOrDefault("")
-        return when (fields[0]) {
-            "KNOWN", "PAIRED" -> Outcome.Known(fields[1], label, UsbMode.entries.firstOrNull { it.wireValue == fields[3] }, fields[4] == "true")
-            "UNKNOWN" -> Outcome.Unknown(fields[1], label)
-            else -> Outcome.Failed(value)
-        }
-    }
-
-    private fun valid(settings: ModuleSettingsSnapshot): Boolean {
-        val safe = Regex("^/[A-Za-z0-9_./=@+-]+$")
-        return settings.authBackend in setOf("generic_configfs", "nothing_qxr") &&
-            safe.matches(settings.authScript) && safe.matches(settings.authApk) && safe.matches(settings.authLibrary)
+            runCatching { client.cancelAuth(session) }
+                .onFailure { env.warn("[AUTH] cancel session failed", it) }
+        }.apply { name = "usb-auth-provider-cancel"; isDaemon = true; start() }
     }
 }

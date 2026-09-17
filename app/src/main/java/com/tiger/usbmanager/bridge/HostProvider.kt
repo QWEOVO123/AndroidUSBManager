@@ -10,13 +10,21 @@ import com.tiger.usbmanager.ModuleConstants
 import com.tiger.usbmanager.ModuleSettings
 import com.tiger.usbmanager.auth.RecognitionSettings
 import com.tiger.usbmanager.auth.RootAuthManager
+import com.tiger.usbmanager.auth.AuthResult
+import java.util.concurrent.Executors
 
 /**
  * ContentProvider in the module app process, queried by system_server via
- * [ContentResolver.call]. After the identification/memory feature was removed it
- * only serves the module-settings snapshot and the pending-apply mailbox.
+ * [ContentResolver.call]. It serves settings, the pending-apply mailbox, and runs
+ * root authentication in the app mount namespace on behalf of system_server.
  */
 class HostProvider : ContentProvider() {
+    private val authLock = Any()
+    private val authWorker = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "usb-auth-app-worker").apply { isDaemon = true }
+    }
+    private var authSession = 0L
+    private var authResult: AuthResult? = null
 
     /** In-memory pending apply (written by chooser UI, polled by system_server watcher).
      *  Volatile so binder thread reads are visible; single slot because there is at
@@ -44,6 +52,9 @@ class HostProvider : ContentProvider() {
             when (method) {
                 UsbBridgeContract.METHOD_PUT_PENDING_APPLY,
                 UsbBridgeContract.METHOD_GET_AND_CLEAR_PENDING_APPLY,
+                UsbBridgeContract.METHOD_START_AUTH,
+                UsbBridgeContract.METHOD_GET_AUTH_RESULT,
+                UsbBridgeContract.METHOD_CANCEL_AUTH,
                 -> {
                     val tok = extras?.getString(UsbBridgeContract.KEY_BRIDGE_TOKEN)
                     if (tok != ModuleConstants.BRIDGE_TOKEN) {
@@ -56,11 +67,61 @@ class HostProvider : ContentProvider() {
                 UsbBridgeContract.METHOD_GET_SETTINGS -> handleGetSettings()
                 UsbBridgeContract.METHOD_PUT_PENDING_APPLY -> handlePutPendingApply(extras)
                 UsbBridgeContract.METHOD_GET_AND_CLEAR_PENDING_APPLY -> handleGetAndClearPendingApply()
+                UsbBridgeContract.METHOD_START_AUTH -> handleStartAuth(extras)
+                UsbBridgeContract.METHOD_GET_AUTH_RESULT -> handleGetAuthResult(extras)
+                UsbBridgeContract.METHOD_CANCEL_AUTH -> handleCancelAuth(extras)
                 else -> null
             }
         }.onFailure {
             Log.w(TAG, "call($method) failed", it)
         }.getOrNull()
+    }
+
+    private fun handleStartAuth(extras: Bundle?): Bundle {
+        val id = extras?.getLong(UsbBridgeContract.KEY_AUTH_SESSION, 0L) ?: 0L
+        val ctx = context
+        if (id == 0L || ctx == null || !RecognitionSettings.isEnabled(ctx))
+            return Bundle().apply { putBoolean(UsbBridgeContract.KEY_RESULT, false) }
+        synchronized(authLock) {
+            authSession = id
+            authResult = null
+        }
+        // Provider binder threads return immediately. Root and the USB handshake
+        // run in the app's mount namespace, where KernelSU exposes `su`.
+        authWorker.execute {
+            val result = runCatching { RootAuthManager.recognize(ctx) }
+                .getOrElse { AuthResult("FAILED", detail = it.message.orEmpty()) }
+            synchronized(authLock) {
+                if (authSession == id) authResult = result
+            }
+            Log.i(TAG, "recognition session=$id outcome=${result.status} host=${result.id.take(12)}")
+        }
+        return Bundle().apply { putBoolean(UsbBridgeContract.KEY_RESULT, true) }
+    }
+
+    private fun handleGetAuthResult(extras: Bundle?): Bundle = synchronized(authLock) {
+        val id = extras?.getLong(UsbBridgeContract.KEY_AUTH_SESSION, 0L) ?: 0L
+        val result = if (id == authSession) authResult else null
+        Bundle().apply {
+            putBoolean(UsbBridgeContract.KEY_AUTH_READY, result != null)
+            if (result != null) {
+                putString(UsbBridgeContract.KEY_AUTH_STATUS, result.status)
+                putString(UsbBridgeContract.KEY_AUTH_ID, result.id)
+                putString(UsbBridgeContract.KEY_AUTH_LABEL, result.label)
+                putString(UsbBridgeContract.KEY_AUTH_MODE, result.mode?.wireValue)
+                putBoolean(UsbBridgeContract.KEY_AUTH_ADB, result.adb)
+                putString(UsbBridgeContract.KEY_AUTH_DETAIL, result.detail)
+            }
+        }
+    }
+
+    private fun handleCancelAuth(extras: Bundle?): Bundle {
+        val id = extras?.getLong(UsbBridgeContract.KEY_AUTH_SESSION, 0L) ?: 0L
+        synchronized(authLock) {
+            if (id == authSession) { authSession = 0L; authResult = null }
+        }
+        // A closed root session restores its gadget in its own finally block.
+        return Bundle().apply { putBoolean(UsbBridgeContract.KEY_RESULT, true) }
     }
 
     // ---- Pending-apply fallback channel ----
@@ -98,13 +159,6 @@ class HostProvider : ContentProvider() {
             putBoolean(UsbBridgeContract.KEY_AUTH_ENABLED, authEnabled)
             putString(UsbBridgeContract.KEY_AUTH_BACKEND, RecognitionSettings.backend(requireNotNull(context)))
             putLong(UsbBridgeContract.KEY_AUTH_TRANSITION_UNTIL, RecognitionSettings.transitionUntil(requireNotNull(context)))
-            if (authEnabled) {
-                runCatching { RootAuthManager.prepare(requireNotNull(context)) }.getOrNull()?.let { paths ->
-                    putString(UsbBridgeContract.KEY_AUTH_SCRIPT, paths.script)
-                    putString(UsbBridgeContract.KEY_AUTH_APK, paths.apk)
-                    putString(UsbBridgeContract.KEY_AUTH_LIBRARY, paths.nativeLibrary)
-                }
-            }
         }
     }
 

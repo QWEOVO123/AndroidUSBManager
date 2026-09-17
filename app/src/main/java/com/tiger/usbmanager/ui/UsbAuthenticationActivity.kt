@@ -73,7 +73,7 @@ class UsbAuthenticationActivity : Activity() {
             if (RecognitionSettings.isEnabled(this)) {
                 content.addView(Button(this).apply {
                     text = getString(R.string.auth_allow_pair)
-                    setOnClickListener { editComputer(null) }
+                    setOnClickListener { runPairingWindow() }
                     layoutParams = margins(dp(8))
                 })
                 content.addView(TextView(this).apply {
@@ -110,7 +110,7 @@ class UsbAuthenticationActivity : Activity() {
         }.apply { name = "usb-auth-detection"; start() }
     }
 
-    private fun editComputer(computer: KnownComputer?) {
+    private fun editComputer(computer: KnownComputer, afterPairing: Boolean = false) {
         val form = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(24), dp(8), dp(24), dp(8))
@@ -119,20 +119,20 @@ class UsbAuthenticationActivity : Activity() {
             hint = getString(R.string.auth_computer_name)
             setSingleLine(true)
             filters = arrayOf(InputFilter.LengthFilter(64))
-            setText(computer?.label.orEmpty())
+            setText(computer.label)
         }
         val mode = Spinner(this).apply {
             adapter = ArrayAdapter(this@UsbAuthenticationActivity, android.R.layout.simple_spinner_dropdown_item,
                 UsbMode.entries.map { getString(it.displayRes) })
-            setSelection((computer?.mode ?: UsbMode.fromWire(ModuleSettings.defaultMode())).ordinal)
+            setSelection((computer.mode ?: UsbMode.fromWire(ModuleSettings.defaultMode())).ordinal)
         }
         val adb = CheckBox(this).apply {
             text = "ADB"
-            isChecked = computer?.adb ?: ModuleSettings.defaultAdb()
+            isChecked = computer.adb
         }
         form.addView(name); form.addView(mode); form.addView(adb)
         val dialog = AlertDialog.Builder(this)
-            .setTitle(if (computer == null) R.string.auth_allow_pair else R.string.auth_edit)
+            .setTitle(if (afterPairing) R.string.auth_pair_customize else R.string.auth_edit)
             .setView(form)
             .setNegativeButton(R.string.dialog_cancel, null)
             .setPositiveButton(R.string.auth_save, null).create()
@@ -146,24 +146,34 @@ class UsbAuthenticationActivity : Activity() {
                 val selectedMode = UsbMode.entries[mode.selectedItemPosition]
                 val selectedAdb = adb.isChecked
                 dialog.dismiss()
-                if (computer == null) runPairingWindow(label, selectedMode, selectedAdb)
-                else {
-                    showBusy(getString(R.string.auth_saving))
-                    Thread {
-                        val ok = runCatching { RootAuthManager.update(this, computer.id, label, selectedMode, selectedAdb) }.getOrDefault(false)
-                        runOnUiThread { render(getString(if (ok) R.string.auth_saved else R.string.auth_save_failed)) }
-                    }.start()
-                }
+                showBusy(getString(R.string.auth_saving))
+                Thread {
+                    val ok = runCatching { RootAuthManager.update(this, computer.id, label, selectedMode, selectedAdb) }.getOrDefault(false)
+                    runOnUiThread { render(getString(if (ok) R.string.auth_saved else R.string.auth_save_failed)) }
+                }.start()
             }
         }
         dialog.show()
     }
 
-    private fun runPairingWindow(label: String, mode: UsbMode, adb: Boolean) {
+    private fun runPairingWindow() {
+        val previous = RecognitionSettings.recentChooserSelection(this)
+        val mode = previous?.mode ?: UsbMode.fromWire(ModuleSettings.defaultMode())
+        val adb = previous?.adb ?: ModuleSettings.defaultAdb()
         showBusy(getString(R.string.auth_pair_starting))
         Thread {
-            val ok = runCatching { RootAuthManager.start(this, label, mode, adb) }.getOrDefault(false)
-            runOnUiThread { render(getString(if (ok) R.string.auth_pair_success else R.string.auth_pair_failed)) }
+            val result = runCatching { RootAuthManager.start(this, mode, adb) }.getOrNull()
+            val paired = result != null && result.status in setOf("PAIRED", "KNOWN") && result.mode != null
+            runOnUiThread {
+                if (!paired) {
+                    render(getString(R.string.auth_pair_failed))
+                    return@runOnUiThread
+                }
+                checkNotNull(result)
+                val computer = KnownComputer(result.id, result.label, System.currentTimeMillis(), result.mode, result.adb)
+                render(getString(R.string.auth_pair_success))
+                editComputer(computer, afterPairing = true)
+            }
         }.apply { name = "usb-auth-pair"; start() }
     }
 

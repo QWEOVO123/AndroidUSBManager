@@ -18,6 +18,7 @@ import com.tiger.usbmanager.ModuleConstants
 import com.tiger.usbmanager.R
 import com.tiger.usbmanager.bridge.UsbConfigSender
 import com.tiger.usbmanager.policy.UsbMode
+import com.tiger.usbmanager.auth.RecognitionSettings
 
 /**
  * Dialog activity launched by the system_server hook every time a USB device-mode
@@ -25,8 +26,8 @@ import com.tiger.usbmanager.policy.UsbMode
  * picker and an ADB toggle, then dispatches the choice back to system_server via
  * [UsbConfigSender].
  *
- * The "remember this computer" feature was removed: there is no host identification
- * or persistence, so every connection asks again.
+ * When identification is enabled this chooser is the fallback for unknown computers
+ * and its last confirmed choice seeds the next pairing profile.
  *
  * Runs in the module app process — never in system_server — so a UI crash can
  * never take down the system.
@@ -128,6 +129,8 @@ class UsbChooserActivity : Activity() {
                     radioGroup.checkedRadioButtonId == it.ordinal
                 } ?: UsbMode.MTP
                 val adb = adbCheck.isChecked
+
+                RecognitionSettings.recordChooserSelection(this, selectedMode, adb)
 
                 UsbConfigSender.apply(
                     context = this,

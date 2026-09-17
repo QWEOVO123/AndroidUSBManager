@@ -2,7 +2,45 @@
 
 [中文](README.md)
 
-USBManager is an **LSPosed** system module for Android. When the phone is connected to a computer by cable, it displays a USB chooser so the user can select the USB mode and ADB state for that connection.
+An Android system module based on the **LSPosed** framework. When the phone is connected to a computer with a cable, it displays a USB chooser that lets the user select the USB mode and ADB state for that connection.
+
+-----
+
+<details>
+<summary><h2>Experimental Feature (click to expand)</h2></summary>
+
+This feature allows the phone to recognize and remember trusted computers. It is disabled by default. While disabled, the USB chooser continues to appear whenever the phone connects to a computer.
+
+* Before first use, run the local capability check:
+>1. Grant this app root access in your root manager.
+>2. Reopen the app, enter **Computer Recognition and Memory**, and tap Detect. Detection runs entirely on the phone and does not require a cable or computer.
+>3. If the app reports that computer recognition and memory are supported, its built-in method can mount the interface required by this feature on your device, and you may continue.
+
+* Save a computer:
+>1. Connect the phone to the target Windows computer with a USB cable, then apply the desired mode and ADB state in the USB chooser.
+>2. Confirm that the Windows backend is running. Search for the USBManagerWinBackEnd process in Task Manager.
+>3. Open **Computer Recognition and Memory** in the phone app and tap **Allow one new computer**. Pairing starts immediately; keep the cable connected.
+>4. After pairing succeeds, a name and configuration dialog appears. You may accept or edit its values.
+
+* Connect to a computer:
+>1. With the Windows backend running, connect the phone to a saved computer by USB. The phone verifies its identity and automatically applies the saved configuration.
+>2. If the Windows backend is not running, the computer has not been saved, or authentication fails, the normal USB chooser appears.
+
+### Important Notice
+
+The primary compatibility targets are AOSP, Google Android, and near-stock systems. Device manufacturers may alter or restrict system USB behavior. The in-app detection result is for reference and does not guarantee stable operation.
+
+This method does not modify the phone kernel.
+
+If you do not need this experimental feature, you can leave root access disabled without affecting the basic features.
+
+The authentication interface is created only when needed and removed immediately afterward. Preparing and enabling it takes time. When this feature is enabled, the delay between connecting the cable and showing the chooser or applying a saved configuration increases significantly and may reach 30 seconds. Disable the experimental feature if this delay is unacceptable.
+
+This experimental feature requires the **[USBManagerWinBackEnd](https://github.com/TigerSpirit217/USBManagerWinBackEnd)** Windows backend. Its program, documentation, and releases are available in that project.
+
+-----
+
+</details>
 
 ## Features
 
@@ -13,28 +51,14 @@ USBManager is an **LSPosed** system module for Android. When the phone is connec
 * **ADB off on unplug:** optionally turns USB debugging off when the cable is removed.
 * **Lock-screen deferral:** waits until unlock by default, with an option to display the chooser while locked.
 
-## Experimental Computer Recognition and Memory
-
-This feature allows the phone to recognize and remember trusted computers. It is disabled by default. While disabled, the USB chooser continues to appear for every computer connection.
-
-For first-time setup, open **Computer Recognition and Memory**, tap the detection button, and grant root when requested. Detection runs entirely on the phone and does not require a cable or computer. If root is not granted, the app asks for authorization.
-
-After detection succeeds, the feature can be enabled. For first-time pairing, tap **Allow one new computer to pair** on the phone. Enter a computer name and select its USB mode and ADB state (for example, MTP + ADB). Keep the cable connected and the Windows companion running; pairing remains available for about 60 seconds after the interface is ready. The name and configuration are stored together with the authenticated identity and applied after pairing. Saved computers can be renamed and reconfigured in the same Edit dialog, or removed.
-
-On later cable connections, the phone verifies the computer automatically. After authentication, the temporary recognition interface is restored to normal USB control and the saved USB mode and ADB state are applied without another chooser. Older records without a configuration continue to show the chooser until edited and saved. Edits take effect on the next recognition. An unknown computer, a timeout, or a failed verification falls back to the normal chooser. An unknown computer cannot add itself to the trust list.
-
-The current compatibility targets are AOSP, Google Android, and near-stock systems. The in-app result is authoritative because vendors may alter or restrict system USB behavior. Support cannot be inferred from an Android version or brand alone. The feature does not modify the phone kernel.
-
-Normal app startup and the standard USB chooser do not request root. Root is used only for the local capability check, recognition sessions after the feature is enabled, and saved-device management.
-
-This feature requires the **[USBManagerWinBackEnd](https://github.com/TigerSpirit217/USBManagerWinBackEnd)** Windows companion. Its application, instructions, and release files are provided by the corresponding project.
-
 ## Installation
 
 ### Requirements
 
 * An Android device with an unlocked bootloader and root access.
-* **LSPosed**.
+
+* The **LSPosed** framework.
+
 * Android 11 or later; Android 12+ is recommended.
 
 ### Steps
@@ -62,7 +86,7 @@ The defaults are Charge only, USB debugging off, ADB off on unplug enabled, and 
 
 ## Debugging
 
-Search for USBManager in LSPosed Manager logs, or run:
+Search for USBManager on the Logs page in LSPosed Manager, or run:
 
     adb logcat -s USBManager
 

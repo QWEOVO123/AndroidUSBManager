@@ -7,6 +7,8 @@ import java.io.File
 import java.nio.charset.StandardCharsets
 
 data class KnownComputer(val id: String, val label: String, val lastSeen: Long, val mode: UsbMode?, val adb: Boolean)
+data class AuthResult(val status: String, val id: String = "", val label: String = "", val mode: UsbMode? = null,
+                      val adb: Boolean = false, val detail: String = "")
 
 /** The only app-process entry point that requests root for USB Authenticate. */
 object RootAuthManager {
@@ -53,19 +55,26 @@ object RootAuthManager {
         )
     }
 
-    fun start(context: Context, label: String, mode: UsbMode, adb: Boolean): Boolean {
-        if (!RecognitionSettings.isEnabled(context)) return false
-        val encodedProfile = profile(label, mode, adb)
+    fun start(context: Context, mode: UsbMode, adb: Boolean): AuthResult {
+        if (!RecognitionSettings.isEnabled(context)) return AuthResult("FAILED", detail = "Recognition disabled")
+        // The computer supplies its initial display name during HELLO2. The user
+        // can customize it after the pairing handshake has actually succeeded.
+        val encodedProfile = profile("", mode, adb, allowEmptyLabel = true)
         val paths = prepare(context)
         RecognitionSettings.markTransition(context, 125_000L)
         return try {
             val result = runRoot(paths, "start", "pair", RecognitionSettings.backend(context), 120_000, encodedProfile)
-            result.output.lineSequence().any {
-                it.startsWith("AUTH_RESULT PAIRED|") || it.startsWith("AUTH_RESULT KNOWN|")
-            }
+            parseAuthResult(result.output)
         } finally {
             RecognitionSettings.markTransition(context, 3_000L)
         }
+    }
+
+    fun recognize(context: Context): AuthResult {
+        if (!RecognitionSettings.isEnabled(context)) return AuthResult("FAILED", detail = "Recognition disabled")
+        val paths = prepare(context)
+        val result = runRoot(paths, "start", "closed", RecognitionSettings.backend(context), 80_000)
+        return parseAuthResult(result.output)
     }
 
     fun restore(context: Context): Boolean {
@@ -106,10 +115,25 @@ object RootAuthManager {
             profile(label, mode, adb)).output.lineSequence().any { it.trim() == "UPDATED" }
     }
 
-    private fun profile(label: String, mode: UsbMode, adb: Boolean): String {
-        require(label.trim().isNotEmpty() && label.trim().length <= 64 && label.none { it.isISOControl() })
+    private fun profile(label: String, mode: UsbMode, adb: Boolean, allowEmptyLabel: Boolean = false): String {
+        require((allowEmptyLabel || label.trim().isNotEmpty()) && label.trim().length <= 64 && label.none { it.isISOControl() })
         return Base64.encodeToString(label.trim().toByteArray(StandardCharsets.UTF_8), Base64.NO_WRAP) +
             ",${mode.wireValue},$adb"
+    }
+
+    private fun parseAuthResult(output: String): AuthResult {
+        val value = output.lineSequence().firstOrNull { it.startsWith("AUTH_RESULT ") }
+            ?.removePrefix("AUTH_RESULT ")?.trim()
+            ?: return AuthResult(if (output.contains("timeout", ignoreCase = true)) "TIMEOUT" else "FAILED",
+                detail = output.takeLast(240))
+        if (value == "TIMEOUT") return AuthResult("TIMEOUT")
+        val fields = value.split('|')
+        if (fields.size != 5 || !fields[1].matches(Regex("[0-9a-f]{64}"))) return AuthResult("FAILED", detail = value)
+        val label = runCatching { String(Base64.decode(fields[2], Base64.DEFAULT), StandardCharsets.UTF_8) }
+            .getOrDefault("")
+        if (fields[0] !in setOf("KNOWN", "PAIRED", "UNKNOWN")) return AuthResult("FAILED", detail = value)
+        return AuthResult(fields[0], fields[1], label,
+            UsbMode.entries.firstOrNull { it.wireValue == fields[3] }, fields[4] == "true")
     }
 
     private data class Result(val code: Int, val output: String)

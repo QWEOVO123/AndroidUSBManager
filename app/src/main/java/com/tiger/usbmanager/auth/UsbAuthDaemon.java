@@ -98,9 +98,11 @@ public final class UsbAuthDaemon {
         if (fields.length != 3 || !Arrays.asList("none", "mtp", "ptp", "rndis", "midi").contains(fields[1])
                 || !(fields[2].equals("true") || fields[2].equals("false"))) throw new IllegalArgumentException("profile");
         String name = new String(unb64(fields[0]), StandardCharsets.UTF_8).trim();
-        if (name.isEmpty() || name.length() > 64 || name.chars().anyMatch(Character::isISOControl))
+        if (name.length() > 64 || name.chars().anyMatch(Character::isISOControl))
             throw new IllegalArgumentException("name");
-        p.setProperty("label", name); p.setProperty("mode", fields[1]); p.setProperty("adb", fields[2]);
+        if (!name.isEmpty()) p.setProperty("label", name);
+        else if (p.getProperty("label", "").isEmpty()) throw new IllegalArgumentException("name");
+        p.setProperty("mode", fields[1]); p.setProperty("adb", fields[2]);
     }
 
     private static void saveHost(Path file, Properties p) throws IOException {
@@ -186,6 +188,7 @@ public final class UsbAuthDaemon {
                     else if (!allowPair) status = "ERROR PAIRING_CLOSED";
                     else {
                         Properties properties = new Properties();
+                        properties.setProperty("label", label);
                         setProfile(properties, pairingProfile);
                         properties.setProperty("id", id);
                         properties.setProperty("publicKey", hostPublic);
