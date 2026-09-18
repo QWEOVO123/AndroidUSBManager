@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <StartupObject>InteropTests</StartupObject>
-    <BackendSource Condition="'$(BackendSource)' == ''">../../../../USBManagerWinBackEnd/Program.cs</BackendSource>
+    <BackendSource Condition="'$(BackendSource)' == ''">../../windows-backend/Program.cs</BackendSource>
   </PropertyGroup>
   <ItemGroup><Compile Include="$(BackendSource)" Link="Backend.cs" /></ItemGroup>
 </Project>

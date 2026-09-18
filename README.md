@@ -18,7 +18,7 @@
 
 - Android 8.0+，已安装 Magisk 或 KernelSU 并允许模块启动脚本运行。
 - 内核需提供 USB Gadget ConfigFS、FunctionFS 和可用物理 UDC。
-- 电脑识别需要 Windows 端 USBManagerWinBackEnd 配套程序运行；本仓库包含 Android APP 和 root 模块，不包含 Windows 后端。
+- 电脑识别需要 Windows 端 USBManagerWinBackEnd 配套程序运行；源码位于 [windows-backend](windows-backend)，可执行程序随 GitHub Release 提供。
 - 基础条件检测是只读检查，不代表所有 ROM 都能成功枚举或恢复 USB；需要实际配对验证。
 - 厂商 HAL、SELinux、USB 控制器行为不同，不保证所有机型兼容。建议先保存数据并保留模块管理器的恢复途径。
 - 仅充电常规切换失败时会尝试解绑物理 UDC；切回数据模式时按已准备好的接口尝试重新绑定。
@@ -87,7 +87,7 @@ sh /data/adb/modules/usbmanager_root/diagnose.sh
 .\tools\test-interop.ps1
 ```
 
-前两项需要 Git for Windows 的 Bash，采用模拟命令，不会实际卸载或重启设备。第三项还需要 .NET 8 SDK 和配套 Windows 后端源码，默认引用项目外的 `USBManagerWinBackEnd/Program.cs`；可通过 MSBuild 的 `BackendSource` 属性或同名环境变量指定源码绝对路径。
+前两项需要 Git for Windows 的 Bash，采用模拟命令，不会实际卸载或重启设备。第三项还需要 .NET 8 SDK，默认使用仓库内的 `windows-backend/Program.cs`；可通过 MSBuild 的 `BackendSource` 属性或同名环境变量指定其他源码绝对路径。
 
 测试不代替真机 USB 枚举、UI、通知或卸载验收。
 

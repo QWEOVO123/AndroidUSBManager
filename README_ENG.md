@@ -4,7 +4,7 @@
 
 An Android USB manager with a Magisk / KernelSU root backend and an unprivileged UI. No LSPosed is required. Maintained by TigerSpirit217 & QWEOVO.
 
-Supports USB mode selection, ADB control, saved computer profiles, silent known-computer notifications and confirmed in-app uninstall/reboot. Computer authentication requires the separate Windows USBManagerWinBackEnd companion, not included here.
+Supports USB mode selection, ADB control, saved computer profiles, silent known-computer notifications and confirmed in-app uninstall/reboot. The Windows companion source is included in [windows-backend](windows-backend); executables are provided as GitHub Release assets.
 
 ## Installation
 
