@@ -17,7 +17,8 @@ chmod 0700 "$DATA" "$RUN" "$LOG_DIR" 2>/dev/null || true
 log_msg() {
     if [ "${USBMANAGER_DEBUG:-0}" != 1 ]; then
         case "$*" in
-            'apply retry '*|'charging fallback begin '*|'rebind after charging requested '*|'confirmed close received;'*|'uninstall cleared '*|'host edit applying '*|'authentication capability detection started'|'chooser deferred '*) return 0 ;;
+            'service starting'|'boot ready '*|'computer USB connected '*|'physical USB disconnect'|'pairing completed '*|'known computer applied '*|'computer not recognized '*|'apply success '*|'charging fallback verified '*|'confirmed uninstall '*|*failed*|*rejected*|'uninstall request received '*) ;;
+            *) return 0 ;;
         esac
     fi
     if [ -f "$LOG" ]; then

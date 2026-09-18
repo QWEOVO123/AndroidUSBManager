@@ -21,7 +21,7 @@ Use JDK 21+, Android SDK / Build Tools 37, NDK 27.2.12479018 and the included Gr
 .\tools\package-module.ps1 -SkipBuild
 ```
 
-Output: `dist/USBManager-Root-v6.2-fix17.zip`. Packaging currently uses the debug-signed APK. Windows-native NDK builds do not require WSL.
+Output: `dist/USBManager-Root-v6.2.1-lite.zip`. Packaging currently uses the debug-signed APK. Windows-native NDK builds do not require WSL.
 
 ## Logs and removal
 

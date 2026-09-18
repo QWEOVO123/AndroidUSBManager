@@ -15,7 +15,7 @@ if (-not (Test-Path -LiteralPath $apk)) { throw "Debug APK not found: $apk" }
 $outputDir = Join-Path $project 'dist'
 $staging = Join-Path ([System.IO.Path]::GetTempPath()) ('usbmanager-module-' + [guid]::NewGuid().ToString('N'))
 $expandedApk = Join-Path ([System.IO.Path]::GetTempPath()) ('usbmanager-apk-' + [guid]::NewGuid().ToString('N'))
-$output = Join-Path $outputDir 'USBManager-Root-v6.2-fix17.zip'
+$output = Join-Path $outputDir 'USBManager-Root-v6.2.1-lite.zip'
 
 try {
     New-Item -ItemType Directory -Path $staging, $expandedApk, $outputDir -Force | Out-Null

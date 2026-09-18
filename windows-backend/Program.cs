@@ -137,14 +137,30 @@ static class Dpapi {
 static class Program {
     const string RunName="USBManagerWinBackEnd";
     static readonly string Data=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),RunName);
-    public static void Log(string text){Directory.CreateDirectory(Data);File.AppendAllText(Path.Combine(Data,"backend.log"),$"{DateTimeOffset.Now:O} {text}{Environment.NewLine}");}
+    static string? lastLog;
+    static DateTimeOffset lastLogAt;
+    public static void Log(string text) {
+        string kind=text.Split(' ')[0];
+        if(kind is not ("START" or "INTERFACES" or "PAIRED" or "KNOWN" or "UNKNOWN" or "ERROR")) return;
+        if(kind is "PAIRED" or "KNOWN" or "UNKNOWN") text=kind;
+        text=text.Split('\n')[0].TrimEnd('\r');
+        var now=DateTimeOffset.UtcNow;
+        if(text==lastLog && now-lastLogAt<TimeSpan.FromSeconds(30)) return;
+        try {
+            Directory.CreateDirectory(Data);
+            string path=Path.Combine(Data,"backend.log");
+            if(File.Exists(path) && new FileInfo(path).Length>262144) File.Move(path,path+".1",true);
+            File.AppendAllText(path,$"{DateTimeOffset.Now:O} {text}{Environment.NewLine}");
+            lastLog=text; lastLogAt=now;
+        } catch(IOException) { } catch(UnauthorizedAccessException) { }
+    }
     static int Main(string[] args) {
         Directory.CreateDirectory(Data);
         if(args.Contains("--install")){using RegistryKey key=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run");key.SetValue(RunName,$"\"{Environment.ProcessPath}\" --background");return 0;}
         if(args.Contains("--uninstall")){using RegistryKey? key=Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run",true);key?.DeleteValue(RunName,false);return 0;}
         using var mutex=new Mutex(true,@"Local\USBManagerWinBackEnd",out bool owner);if(!owner)return 0;
         using ECDsa identity=Identity.Load(Path.Combine(Data,"identity.dpapi")); string label=Environment.MachineName; string? last=null; int lastCount=-1;
-        Log($"START build=audit14 pid={Environment.ProcessId} machine={label}");
+        Log("START build=6.2.1-lite logging=key-events");
         while(true){try{var paths=Native.Paths();if(paths.Count!=lastCount){Log($"INTERFACES count={paths.Count}");lastCount=paths.Count;}if(paths.Count==1&&paths[0]!=last){using var link=new Link(paths[0]);string result=Protocol.Authenticate(link,identity,label);Log(result);if(result.StartsWith("KNOWN ")||result.StartsWith("PAIRED "))last=paths[0];else Thread.Sleep(2000);}else if(paths.Count==0)last=null;}catch(Exception error){Log("ERROR "+error);last=null;}Thread.Sleep(500);}
     }
 }

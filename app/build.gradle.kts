@@ -14,8 +14,8 @@ android {
         applicationId = "com.tiger.usbmanager"
         minSdk = 26
         targetSdk = 37
-        versionCode = 23
-        versionName = "6.2-fix17"
+        versionCode = 24
+        versionName = "6.2.1-lite"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }

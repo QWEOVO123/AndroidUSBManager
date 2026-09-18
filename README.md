@@ -77,7 +77,7 @@ sh /data/adb/modules/usbmanager_root/diagnose.sh
 .\tools\package-module.ps1 -SkipBuild
 ```
 
-产物位于 `dist/USBManager-Root-v6.2-fix17.zip`。目前打包的是 **debug 签名 APK**，不是已配置正式签名的商用发布包。ZIP 包含 arm64-v8a / x86_64 原生库及许可证。
+产物位于 `dist/USBManager-Root-v6.2.1-lite.zip`。目前打包的是 **debug 签名 APK**，不是已配置正式签名的商用发布包。ZIP 包含 arm64-v8a / x86_64 原生库及许可证。
 
 ## 回归检查
 
