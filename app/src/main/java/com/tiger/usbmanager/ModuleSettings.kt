@@ -7,9 +7,8 @@ import com.tiger.usbmanager.policy.UsbMode
 /**
  * Generic module settings (default mode, default ADB, disconnect auto-off toggle).
  *
- * Both the module app and system_server read these through the same file. The
- * module app accesses it directly; system_server reaches it via the HostProvider
- * ContentProvider call surface (METHOD_GET_SETTINGS).
+ * The UI owns the preferences and mirrors validated snapshots to the root service
+ * through BackendBridge's atomic command files.
  */
 object ModuleSettings {
 

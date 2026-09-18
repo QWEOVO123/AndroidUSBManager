@@ -18,6 +18,7 @@ import com.tiger.usbmanager.ModuleActivationCheck
 import com.tiger.usbmanager.ModuleSettings
 import com.tiger.usbmanager.R
 import com.tiger.usbmanager.policy.UsbMode
+import com.tiger.usbmanager.bridge.BackendBridge
 
 /**
  * Main entry point when launched from the desktop.
@@ -27,7 +28,7 @@ import com.tiger.usbmanager.policy.UsbMode
  * - Subsequent launches: shows module activation status and the module settings
  *   (default mode, default ADB, auto-off, while-locked chooser).
  *
- * The device-identification & "remember this computer" feature has been removed.
+ * Root-backend settings, trusted computers, notifications and removal.
  */
 class MainActivity : Activity() {
 
@@ -36,12 +37,44 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ModuleSettings.init(this)
+        requestNotificationPermissionOnce()
 
         if (!ModuleSettings.isFirstLaunchDone()) {
             showIntro()
         } else {
             showConfigManager()
         }
+    }
+
+    private fun requestNotificationPermissionOnce() {
+        if (android.os.Build.VERSION.SDK_INT < 33) return
+        val prefs = createDeviceProtectedStorageContext().getSharedPreferences("notification_permission", MODE_PRIVATE)
+        if (prefs.getBoolean("asked", false)) return
+        prefs.edit().putBoolean("asked", true).apply()
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 217)
+        }
+    }
+
+    private fun confirmUninstall() {
+        AlertDialog.Builder(this)
+            .setTitle("卸载并重启设备？")
+            .setMessage("将卸载 USBManager APP、删除模块并立即重启设备。默认 USB 配置会重置为仅充电并关闭 ADB。\n\nAPP 设置将被清除；已保存电脑记录和诊断日志保留在 /data/adb。请先保存其他应用中的工作。")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("确认卸载并重启") { _, _ ->
+                val waiting = AlertDialog.Builder(this).setMessage("正在通知模块…").setCancelable(false).show()
+                Thread {
+                    val response = runCatching { BackendBridge.uninstallAndReboot(applicationContext) }
+                        .getOrElse { "ERROR|IPC|${it.message}" }
+                    runOnUiThread {
+                        waiting.dismiss()
+                        if (response == "OK") finishAffinity()
+                        else AlertDialog.Builder(this).setTitle("未开始卸载")
+                            .setMessage("模块未确认卸载：\n$response\n\nBUSY：等待识别/检测结束后重试。NO_RESPONSE：检查模块是否运行。MODULE_PATH：模块目录校验失败。")
+                            .setPositiveButton("知道了", null).show()
+                    }
+                }.start()
+            }.show()
     }
 
     // ------------------------------------------------------------------ Intro
@@ -134,6 +167,7 @@ class MainActivity : Activity() {
             ).apply { topMargin = dp(32) }
         })
 
+        UiStyle.polish(root)
         setContentView(ScrollView(this).apply {
             setBackgroundColor(getColor(R.color.bg_page))
             addView(root, ViewGroup.LayoutParams(
@@ -187,6 +221,8 @@ class MainActivity : Activity() {
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
+        column.addView(UiStyle.heading(this, "连接，由你掌控"))
+        column.addView(UiStyle.note(this, "USB 模式 · 可信电脑 · 本地隐私\nTigerSpirit217&QWEOVO"))
 
         // Module settings section
         column.addView(sectionHeader(getString(R.string.settings_module_settings)))
@@ -194,11 +230,27 @@ class MainActivity : Activity() {
         column.addView(sectionHeader(getString(R.string.auth_section_title)))
         column.addView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(getColor(R.color.bg_card))
+            UiStyle.card(this)
             setPadding(dp(16), dp(6), dp(16), dp(6))
             layoutParams = margin()
             addView(row(getString(R.string.auth_entry_title), getString(R.string.auth_entry_value)) {
                 startActivity(Intent(this@MainActivity, UsbAuthenticationActivity::class.java))
+            })
+        })
+
+        column.addView(sectionHeader("通知与维护"))
+        column.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            UiStyle.card(this)
+            setPadding(dp(18), dp(8), dp(18), dp(8))
+            layoutParams = margin()
+            addView(row("已知电脑连接提醒", "通知设置  ›") {
+                startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName))
+            })
+            addView(UiStyle.note(this@MainActivity, "识别成功后静默通知，不打开页面、不播放声音。"))
+            addView(row("卸载并重启", "谨慎操作  ›") { confirmUninstall() }.apply {
+                for (i in 0 until childCount) (getChildAt(i) as? TextView)?.setTextColor(getColor(R.color.banner_inactive_text))
             })
         })
 
@@ -212,6 +264,7 @@ class MainActivity : Activity() {
             1f,
         ))
 
+        UiStyle.polish(root)
         setContentView(root)
         refreshActivationStatus()
     }
@@ -269,12 +322,7 @@ class MainActivity : Activity() {
                 card.setBackgroundColor(getColor(R.color.banner_active_bg))
                 title.text = getString(R.string.activate_state_active)
                 title.setTextColor(getColor(R.color.banner_active_text))
-                body.text = getString(
-                    R.string.activate_body,
-                    getString(if (status.hasUsbDeviceManagerHook) R.string.activate_hook_ok else R.string.activate_hook_fail),
-                    getString(if (status.hasAdbHook) R.string.activate_hook_ok else R.string.activate_hook_fail),
-                    status.packageName,
-                )
+                body.text = getString(R.string.activate_body, status.state, status.backend)
                 btnRow.addView(recheckButton())
             }
             is ModuleActivationCheck.Status.Inactive -> {
@@ -282,7 +330,7 @@ class MainActivity : Activity() {
                 title.text = getString(R.string.activate_state_inactive)
                 title.setTextColor(getColor(R.color.banner_inactive_text))
                 body.text = status.reason
-                btnRow.addView(openLsposedGuideButton())
+                btnRow.addView(openModuleGuideButton())
                 btnRow.addView(recheckButton())
             }
             is ModuleActivationCheck.Status.Unknown -> {
@@ -290,13 +338,16 @@ class MainActivity : Activity() {
                 title.text = getString(R.string.activate_state_unknown)
                 title.setTextColor(getColor(R.color.banner_unknown_text))
                 body.text = status.note
-                btnRow.addView(openLsposedGuideButton())
+                btnRow.addView(openModuleGuideButton())
                 btnRow.addView(recheckButton())
             }
         }
         card.addView(title)
         card.addView(body)
         card.addView(btnRow)
+        val oldColor = (card.background as? android.graphics.drawable.ColorDrawable)?.color ?: getColor(R.color.bg_card)
+        UiStyle.card(card, oldColor)
+        UiStyle.polish(card)
         activationStatusContainer.addView(card)
     }
 
@@ -308,7 +359,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun openLsposedGuideButton(): Button = Button(this).apply {
+    private fun openModuleGuideButton(): Button = Button(this).apply {
         text = getString(R.string.action_activation_guide)
         setOnClickListener {
             AlertDialog.Builder(this@MainActivity)
@@ -331,7 +382,7 @@ class MainActivity : Activity() {
 
     private fun settingsCard(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setBackgroundColor(getColor(R.color.bg_card))
+        UiStyle.card(this)
         setPadding(dp(16), dp(16), dp(16), dp(16))
         layoutParams = margin()
 
@@ -340,12 +391,15 @@ class MainActivity : Activity() {
         })
         addView(toggleRow(getString(R.string.settings_default_adb), ModuleSettings.defaultAdb()) { checked ->
             ModuleSettings.prefs().edit().putBoolean(ModuleSettings.KEY_DEFAULT_ADB, checked).apply()
+            BackendBridge.syncSettings(this@MainActivity)
         })
         addView(toggleRow(getString(R.string.settings_disconnect_auto_off), ModuleSettings.disconnectAutoOffAdb()) { checked ->
             ModuleSettings.prefs().edit().putBoolean(ModuleSettings.KEY_DISCONNECT_AUTO_OFF_ADB, checked).apply()
+            BackendBridge.syncSettings(this@MainActivity)
         })
         addView(toggleRow(getString(R.string.settings_chooser_while_locked), ModuleSettings.chooserWhileLocked()) { checked ->
             ModuleSettings.prefs().edit().putBoolean(ModuleSettings.KEY_CHOOSER_WHILE_LOCKED, checked).apply()
+            BackendBridge.syncSettings(this@MainActivity)
         })
         addView(Button(this@MainActivity).apply {
             text = getString(R.string.action_get_logs)
@@ -382,6 +436,7 @@ class MainActivity : Activity() {
             .setSingleChoiceItems(labels, checked) { dialog, which ->
                 val mode = UsbMode.entries[which]
                 ModuleSettings.prefs().edit().putString(ModuleSettings.KEY_DEFAULT_MODE, mode.wireValue).apply()
+                BackendBridge.syncSettings(this)
                 dialog.dismiss()
                 recreate()
             }
@@ -405,7 +460,8 @@ class MainActivity : Activity() {
             isClickable = true
             isFocusable = true
             setOnClickListener { onClick() }
-            setPadding(0, dp(10), 0, dp(10))
+            minimumHeight = dp(56)
+            setPadding(0, dp(12), 0, dp(12))
             addView(TextView(this@MainActivity).apply {
                 text = title
                 textSize = 15f
@@ -430,7 +486,7 @@ class MainActivity : Activity() {
                 setTextColor(getColor(R.color.text_subtitle))
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             })
-            addView(CheckBox(this@MainActivity).apply {
+            addView(android.widget.Switch(this@MainActivity).apply {
                 isChecked = initial
                 setOnCheckedChangeListener { _, isChecked -> onChange(isChecked) }
             })

@@ -12,7 +12,7 @@ import com.tiger.usbmanager.auth.KnownComputer
 import com.tiger.usbmanager.policy.UsbMode
 import android.text.InputFilter
 import com.tiger.usbmanager.auth.RecognitionSettings
-import com.tiger.usbmanager.auth.RootAuthManager
+import com.tiger.usbmanager.bridge.BackendBridge
 import java.text.DateFormat
 import java.util.Date
 
@@ -49,6 +49,8 @@ class UsbAuthenticationActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(18), dp(18), dp(28))
         }
+        content.addView(UiStyle.heading(this, "你的可信设备"))
+        content.addView(UiStyle.note(this, "一次配对，再次连接自动应用配置。"))
         content.addView(TextView(this).apply {
             text = getString(R.string.auth_usage)
             textSize = 14f
@@ -67,7 +69,6 @@ class UsbAuthenticationActivity : Activity() {
             content.addView(status(getString(R.string.auth_supported)))
             content.addView(toggle(getString(R.string.auth_enable), RecognitionSettings.isEnabled(this)) { enabled ->
                 RecognitionSettings.setEnabled(this@UsbAuthenticationActivity, enabled)
-                if (!enabled) Thread { runCatching { RootAuthManager.restore(this@UsbAuthenticationActivity) } }.start()
                 render()
             })
             if (RecognitionSettings.isEnabled(this)) {
@@ -86,26 +87,19 @@ class UsbAuthenticationActivity : Activity() {
             }
         }
         root.addView(ScrollView(this).apply { addView(content) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        UiStyle.polish(root)
         setContentView(root)
     }
 
     private fun runDetection() {
         showBusy(getString(R.string.auth_detecting))
         Thread {
-            val result = runCatching { RootAuthManager.detect(this) }.getOrElse {
-                RootAuthManager.Detection(
-                    false,
-                    detail = it.message.orEmpty(),
-                    failure = RootAuthManager.DetectionFailure.UNSUPPORTED,
-                )
-            }
+            val result = runCatching { BackendBridge.detect(this) }
+                .getOrElse { BackendBridge.Detection(false, detail = it.message.orEmpty()) }
             runOnUiThread {
-                val message = when {
-                    result.supported -> R.string.auth_detect_pass
-                    result.failure == RootAuthManager.DetectionFailure.ROOT_REQUIRED -> R.string.auth_detect_root_required
-                    else -> R.string.auth_detect_fail
-                }
-                render(getString(message))
+                if (result.supported) RecognitionSettings.saveDetectedBackend(this, result.backend)
+                val message = if (result.supported) R.string.auth_detect_pass else R.string.auth_detect_fail
+                render(getString(message) + result.detail.takeIf { it.isNotBlank() }?.let { "\n$it" }.orEmpty())
             }
         }.apply { name = "usb-auth-detection"; start() }
     }
@@ -148,8 +142,15 @@ class UsbAuthenticationActivity : Activity() {
                 dialog.dismiss()
                 showBusy(getString(R.string.auth_saving))
                 Thread {
-                    val ok = runCatching { RootAuthManager.update(this, computer.id, label, selectedMode, selectedAdb) }.getOrDefault(false)
-                    runOnUiThread { render(getString(if (ok) R.string.auth_saved else R.string.auth_save_failed)) }
+                    val updated = computer.copy(label = label, mode = selectedMode, adb = selectedAdb)
+                    val response = runCatching { BackendBridge.updateComputer(this, updated) }.getOrDefault("ERROR|IPC")
+                    val message = when (response) {
+                        "OK|APPLIED" -> "已保存，并已应用到当前电脑"
+                        "OK", "OK|SAVED" -> "已保存；此电脑下次连接时应用"
+                        "SAVED|APPLY_FAILED" -> "已保存，但当前 USB 配置应用失败，请查看日志"
+                        else -> "更新未完成：$response"
+                    }
+                    runOnUiThread { render(message) }
                 }.start()
             }
         }
@@ -162,16 +163,16 @@ class UsbAuthenticationActivity : Activity() {
         val adb = previous?.adb ?: ModuleSettings.defaultAdb()
         showBusy(getString(R.string.auth_pair_starting))
         Thread {
-            val result = runCatching { RootAuthManager.start(this, mode, adb) }.getOrNull()
-            val paired = result != null && result.status in setOf("PAIRED", "KNOWN") && result.mode != null
+            val result = runCatching { BackendBridge.pair(this, mode, adb) }.getOrNull()
+            val paired = result != null && result.status in setOf("PAIRED", "KNOWN") && result.computer?.mode != null
             runOnUiThread {
                 if (!paired) {
-                    render(getString(R.string.auth_pair_failed))
+                    render(getString(R.string.auth_pair_failed) + result?.detail?.takeIf { it.isNotBlank() }?.let { "\n$it" }.orEmpty())
                     return@runOnUiThread
                 }
-                checkNotNull(result)
-                val computer = KnownComputer(result.id, result.label, System.currentTimeMillis(), result.mode, result.adb)
-                render(getString(R.string.auth_pair_success))
+                val computer = checkNotNull(result?.computer)
+                render(result.detail.ifBlank { getString(R.string.auth_pair_success) })
+                if (result.detail.isNotBlank()) Toast.makeText(this, result.detail, Toast.LENGTH_LONG).show()
                 editComputer(computer, afterPairing = true)
             }
         }.apply { name = "usb-auth-pair"; start() }
@@ -182,7 +183,7 @@ class UsbAuthenticationActivity : Activity() {
         val target = content
         target.addView(progress)
         Thread {
-            val computers = runCatching { RootAuthManager.list(this) }.getOrDefault(emptyList())
+            val computers = runCatching { BackendBridge.listComputers(this) }.getOrDefault(emptyList())
             runOnUiThread {
                 if (content !== target || isFinishing || isDestroyed) return@runOnUiThread
                 content.removeView(progress)
@@ -193,10 +194,10 @@ class UsbAuthenticationActivity : Activity() {
                     })
                 } else computers.sortedByDescending { it.lastSeen }.forEach { computer ->
                     content.addView(LinearLayout(this).apply {
-                        orientation = LinearLayout.HORIZONTAL
+                        orientation = LinearLayout.VERTICAL
                         gravity = Gravity.CENTER_VERTICAL
                         setPadding(dp(12), dp(10), dp(4), dp(10))
-                        setBackgroundColor(getColor(R.color.bg_card))
+                        UiStyle.card(this)
                         addView(TextView(this@UsbAuthenticationActivity).apply {
                             text = getString(
                                 R.string.auth_saved_item,
@@ -206,7 +207,9 @@ class UsbAuthenticationActivity : Activity() {
                             )
                             append("\n" + (computer.mode?.let { getString(it.displayRes) } ?: getString(R.string.auth_config_missing)) + if (computer.adb) " + ADB" else "")
                             setTextColor(getColor(R.color.text_body))
-                            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                            textSize = 15f
+                            setPadding(dp(6), dp(8), dp(6), dp(14))
                         })
                         addView(Button(this@UsbAuthenticationActivity).apply {
                             text = getString(R.string.auth_edit)
@@ -220,12 +223,13 @@ class UsbAuthenticationActivity : Activity() {
                                     .setNegativeButton(R.string.dialog_cancel, null)
                                     .setPositiveButton(R.string.auth_delete) { _, _ ->
                                         Thread {
-                                            val ok = runCatching { RootAuthManager.delete(this@UsbAuthenticationActivity, computer.id) }.getOrDefault(false)
+                                            val ok = runCatching { BackendBridge.deleteComputer(this@UsbAuthenticationActivity, computer.id) }.getOrDefault(false)
                                             runOnUiThread { render(if (ok) null else getString(R.string.auth_save_failed)) }
                                         }.start()
                                     }.show()
                             }
                         })
+                        UiStyle.polish(this)
                     }, margins(dp(6)))
                 }
             }

@@ -1,6 +1,6 @@
 <resources>
     <!-- Page background -->
-    <color name="bg_page">#FFF6F7F8</color>
+    <color name="bg_page">#FFF3F6FC</color>
     <!-- Card / toolbar background -->
     <color name="bg_card">#FFFFFFFF</color>
     <!-- Primary text -->
@@ -14,7 +14,7 @@
     <!-- Subtitle text -->
     <color name="text_subtitle">#FF222222</color>
     <!-- Accent / link color -->
-    <color name="accent">#FF1565C0</color>
+    <color name="accent">#FF2865D8</color>
     <!-- Activation: active (green) -->
     <color name="banner_active_bg">#FFE8F5E9</color>
     <color name="banner_active_text">#FF2E7D32</color>

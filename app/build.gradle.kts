@@ -14,8 +14,8 @@ android {
         applicationId = "com.tiger.usbmanager"
         minSdk = 26
         targetSdk = 37
-        versionCode = 5
-        versionName = "5"
+        versionCode = 23
+        versionName = "6.2-fix17"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
@@ -81,14 +81,4 @@ android {
 configurations.all {
     exclude("org.jetbrains.kotlin", "kotlin-stdlib-jdk7")
     exclude("org.jetbrains.kotlin", "kotlin-stdlib-jdk8")
-}
-
-dependencies {
-    compileOnly(libs.libxposed.api)
-    implementation(libs.libxposed.service)
-    implementation(libs.appcompat)
-    implementation(libs.material)
-    implementation(libs.activity)
-    implementation(libs.constraintlayout)
-    implementation(libs.gson)
 }

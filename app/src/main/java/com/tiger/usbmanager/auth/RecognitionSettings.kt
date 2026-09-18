@@ -2,6 +2,7 @@ package com.tiger.usbmanager.auth
 
 import android.content.Context
 import com.tiger.usbmanager.ModuleConstants
+import com.tiger.usbmanager.bridge.BackendBridge
 
 object RecognitionSettings {
     const val BACKEND_NONE = "none"
@@ -16,7 +17,7 @@ object RecognitionSettings {
 
     data class UsbChoice(val mode: com.tiger.usbmanager.policy.UsbMode, val adb: Boolean)
 
-    private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(
+    private fun prefs(context: Context) = context.createDeviceProtectedStorageContext().getSharedPreferences(
         ModuleConstants.PREFS_SETTINGS,
         Context.MODE_PRIVATE,
     )
@@ -27,7 +28,7 @@ object RecognitionSettings {
     fun transitionUntil(context: Context): Long = prefs(context).getLong(KEY_TRANSITION_UNTIL, 0L)
 
     fun markTransition(context: Context, durationMs: Long = 45_000L) {
-        // commit() is intentional: system_server must see this before USB teardown.
+        // Kept synchronous for callers that need a durable transition marker.
         prefs(context).edit().putLong(KEY_TRANSITION_UNTIL, System.currentTimeMillis() + durationMs).commit()
     }
 
@@ -54,9 +55,11 @@ object RecognitionSettings {
     fun saveDetectedBackend(context: Context, backend: String) {
         require(backend == BACKEND_GENERIC || backend == BACKEND_NOTHING)
         prefs(context).edit().putString(KEY_BACKEND, backend).putBoolean(KEY_ENABLED, false).apply()
+        BackendBridge.syncSettings(context)
     }
 
     fun setEnabled(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean(KEY_ENABLED, enabled && isSupported(context)).apply()
+        BackendBridge.syncSettings(context)
     }
 }

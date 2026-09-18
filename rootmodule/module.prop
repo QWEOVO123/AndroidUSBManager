@@ -1,0 +1,6 @@
+id=usbmanager_root
+name=USBManager Root Backend
+version=6.2-fix17
+versionCode=23
+author=TigerSpirit217&QWEOVO
+description=Root USB gadget backend and unprivileged UI for USB mode selection and trusted-computer authentication.

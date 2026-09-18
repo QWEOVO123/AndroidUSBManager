@@ -21,22 +21,20 @@ import com.tiger.usbmanager.policy.UsbMode
 import com.tiger.usbmanager.auth.RecognitionSettings
 
 /**
- * Dialog activity launched by the system_server hook every time a USB device-mode
+ * Dialog activity launched by the root service every time a USB device-mode
  * connection is detected (the phone plugged into a computer). Shows the USB mode
- * picker and an ADB toggle, then dispatches the choice back to system_server via
+ * picker and an ADB toggle, then writes the choice for the root service via
  * [UsbConfigSender].
  *
  * When identification is enabled this chooser is the fallback for unknown computers
  * and its last confirmed choice seeds the next pairing profile.
  *
- * Runs in the module app process — never in system_server — so a UI crash can
- * never take down the system.
+ * Runs as an ordinary app process, so a UI crash cannot take down the root backend.
  *
  * ## Outcome signalling
  *
  * No matter how the user closes this activity (+ve / -ve / back / swipe-away)
- * we send an `ACTION_CHOOSER_CLOSED` broadcast to system_server so the watcher
- * knows whether to cancel the pending-apply poll. Paths:
+ * we write a close command so the root service can finish the session. Paths:
  *   - Positive button → outcome="confirmed" (also sends APPLY_USB_CONFIG)
  *   - Negative button → outcome="cancelled"
  *   - onBackPressed / onCancel / finish without explicit action → outcome="dismissed"
@@ -44,19 +42,19 @@ import com.tiger.usbmanager.auth.RecognitionSettings
  */
 class UsbChooserActivity : Activity() {
 
-    private var token: Int = 0
+    private var sessionId: String = ""
     private var outcomeReported: Boolean = false
 
     /**
-     * Listens for system_server's ACTION_DISMISS_CHOOSER (sent when the USB cable is
+     * Listens for the root service's ACTION_DISMISS_CHOOSER (sent when the USB cable is
      * unplugged while we're still on screen). On receipt we finish ourselves so the
      * chooser window doesn't linger after the cable is pulled. Registration is scoped
      * to the activity's visible lifetime (onStart/onStop) and guarded by token.
      */
     private val dismissReceiver: BroadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            val receivedToken = intent.getIntExtra(ModuleConstants.EXTRA_TOKEN, 0)
-            if (receivedToken != token) return // not ours; ignore
+            val received = intent.getStringExtra(ModuleConstants.EXTRA_SESSION_ID).orEmpty()
+            if (received != sessionId) return
             finish()
         }
     }
@@ -84,65 +82,97 @@ class UsbChooserActivity : Activity() {
 
         val preselectMode = UsbMode.fromWire(intent?.getStringExtra(ModuleConstants.EXTRA_USB_MODE))
         val rawPreselectAdb = intent?.getBooleanExtra(ModuleConstants.EXTRA_ADB_ENABLED, false) ?: false
-        token = intent?.getIntExtra(ModuleConstants.EXTRA_TOKEN, 0) ?: 0
+        sessionId = intent?.getStringExtra(ModuleConstants.EXTRA_SESSION_ID).orEmpty()
+        if (!sessionId.matches(Regex("[0-9a-f]{32}"))) {
+            finish()
+            return
+        }
 
-        // This activity is exported so system_server can start it, which means any
+        // This activity is exported so the root service can start it, which means any
         // third-party app can also launch it with forged extras (e.g. ADB pre-ticked)
         // as a social-engineering vector. When the caller is an untrusted app we
         // refuse to honour a pre-selected "ADB on" — the user must explicitly check
-        // ADB themselves. A launch from system_server yields a null calling activity
-        // (system isn't an activity), so those legitimate launches still work.
+        // ADB themselves. The strong root-generated session id below is the
+        // authoritative gate for applying any choice.
         val caller = getCallingActivity()
         val trustedPublisher = caller == null || caller.packageName == ModuleConstants.MODULE_PACKAGE
         val preselectAdb = rawPreselectAdb && trustedPublisher
 
-        val padding = dp(16)
+        val padding = dp(22)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(padding, padding, padding, padding)
         }
+        val icon = android.widget.ImageView(this).apply {
+            setImageResource(R.drawable.ic_connection_notification)
+            imageTintList = android.content.res.ColorStateList.valueOf(getColor(R.color.accent))
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            UiStyle.card(this, getColor(R.color.banner_unknown_bg))
+            importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        root.addView(icon, LinearLayout.LayoutParams(dp(48), dp(48)).apply { bottomMargin = dp(8) })
+        root.addView(UiStyle.heading(this, "USB 连接"))
+        root.addView(UiStyle.note(this, "为这次连接选择用途\n电脑识别与已保存配置可在 APP 中管理"))
 
         val radioGroup = RadioGroup(this).apply {
             orientation = RadioGroup.VERTICAL
         }
         UsbMode.entries.forEach { mode ->
             RadioButton(this).apply {
-                text = getString(mode.displayRes)
-                id = mode.ordinal
+                val description = when (mode) {
+                    UsbMode.CHARGING -> "关闭文件传输"
+                    UsbMode.MTP -> "浏览与传输文件"
+                    UsbMode.PTP -> "导入照片与影像"
+                    UsbMode.RNDIS -> "通过 USB 共享网络"
+                    UsbMode.MIDI -> "连接音乐与 MIDI 设备"
+                }
+                text = getString(mode.displayRes) + "\n" + description
+                textSize = 14f
+                setTextColor(getColor(R.color.text_primary))
+                background = UiStyle.option(this@UsbChooserActivity)
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                minHeight = dp(62)
+                layoutParams = RadioGroup.LayoutParams(-1, -2).apply { bottomMargin = dp(8) }
+                id = mode.ordinal + 100
                 isChecked = mode == preselectMode
                 radioGroup.addView(this)
             }
         }
         root.addView(radioGroup)
 
-        val adbCheck = CheckBox(this).apply {
-            text = getString(R.string.chooser_adb)
+        val adbCheck = android.widget.Switch(this).apply {
+            text = "ADB 调试"
+            textSize = 15f
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+            UiStyle.card(this, getColor(R.color.banner_unknown_bg))
             isChecked = preselectAdb
         }
         root.addView(adbCheck)
 
         AlertDialog.Builder(this)
-            .setTitle(R.string.chooser_title)
-            .setView(root)
+            .setView(android.widget.ScrollView(this).apply { addView(root) })
             .setPositiveButton(R.string.chooser_confirm) { _, _ ->
                 val selectedMode = UsbMode.entries.firstOrNull {
-                    radioGroup.checkedRadioButtonId == it.ordinal
+                    radioGroup.checkedRadioButtonId == it.ordinal + 100
                 } ?: UsbMode.MTP
                 val adb = adbCheck.isChecked
 
                 RecognitionSettings.recordChooserSelection(this, selectedMode, adb)
 
-                UsbConfigSender.apply(
-                    context = this,
-                    mode = selectedMode,
-                    adb = adb,
-                )
                 reportOutcome("confirmed")
-                Toast.makeText(
-                    this,
-                    selectedMode.name + if (adb) " + ADB" else "",
-                    Toast.LENGTH_SHORT,
-                ).show()
+                val appContext = applicationContext
+                val submittedSession = sessionId
+                Thread {
+                    val applied = runCatching {
+                        UsbConfigSender.apply(appContext, submittedSession, selectedMode, adb)
+                    }.getOrDefault(false)
+                    runOnUiThread {
+                        Toast.makeText(appContext,
+                            if (applied) "USB: " + selectedMode.name + if (adb) " + ADB" else ""
+                            else "USB configuration failed. Check backend status/logs.",
+                            Toast.LENGTH_LONG).show()
+                    }
+                }.start()
                 finish()
             }
             .setNegativeButton(R.string.chooser_cancel) { _, _ ->
@@ -151,11 +181,15 @@ class UsbChooserActivity : Activity() {
             }
             .setOnCancelListener {
                 reportOutcome("dismissed")
+                finish()
             }
             .create()
             .apply {
                 window?.setGravity(Gravity.CENTER)
                 show()
+                window?.setBackgroundDrawable(UiStyle.round(this@UsbChooserActivity, getColor(R.color.bg_card), 28))
+                window?.setLayout((resources.displayMetrics.widthPixels * 0.92f).toInt().coerceAtMost(dp(480)), android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
+                getButton(AlertDialog.BUTTON_POSITIVE)?.let { UiStyle.polish(it) }
             }
     }
 
@@ -167,22 +201,22 @@ class UsbChooserActivity : Activity() {
     override fun onDestroy() {
         // Safety net: if neither positive / negative / onCancel / onBackPressed
         // fired (e.g. system killed the task), emit "dismissed" once.
-        reportOutcome("dismissed")
+        if (!isChangingConfigurations) reportOutcome("dismissed")
         super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        // Reset outcome flag so the recreated activity can report again.
-        outcomeReported = false
+        // Do not let the old instance dismiss a replacement session on destroy.
+        outcomeReported = true
         recreate()
     }
 
     private fun reportOutcome(outcome: String) {
         if (outcomeReported) return
         outcomeReported = true
-        UsbConfigSender.sendChooserClosed(this, token, outcome)
+        UsbConfigSender.sendChooserClosed(this, sessionId, outcome)
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()

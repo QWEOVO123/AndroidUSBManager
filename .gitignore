@@ -9,3 +9,11 @@
 /.kotlin
 /.idea
 keystore.properties
+/dist
+**/bin/
+**/obj/
+*.log
+*.jks
+*.keystore
+/AUDIT-*.md
+/RELEASE-*.md

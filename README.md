@@ -1,109 +1,100 @@
-# USBManager — Android USB 管理模块
+# AndroidUSBManager
 
 [English](README_ENG.md)
 
-一个基于 **LSPosed** 框架的 Android 系统模块。手机通过数据线连接电脑时，它会显示 USB 选择窗口，让用户决定本次连接的 USB 模式和 ADB 状态。
+不依赖 LSPosed 的 Android USB 管理模块。由 **Magisk / KernelSU root 后端**负责 USB 控制，普通权限 APP 提供界面，通过应用私有目录中的原子文件交换命令。APP 本身不申请 root。
 
------
-
-<details>
-<summary><h2>实验性功能（点击展开）</h2></summary>
-
-该功能用于让手机识别并记住可信电脑。功能默认关闭，关闭时仍会在每次连接电脑时显示 USB 选择窗口。
-
-* 首次使用时，请先进行本地检测：
->1. 在 root 管理器中授予本软件 root 权限。
->2. 重新打开应用，进入“电脑识别与记忆”页面，点击检测。（检测完全在手机本地完成，不要求先连接数据线或电脑。）
->3. 若显示“此设备支持电脑识别与记忆功能”，则表明软件内置的方案可以在您的设备上挂载功能所需的端口，您可以继续使用。
-
-* 保存设备：
->1. 将手机与目标windows设备通过数据线连接，在弹出的 USB 选择窗口中应用所需模式与 ADB 状态。
->2. 请确认windows后端正在运行。（在任务管理器中搜索 USBManagerWinBackEnd 进程）
->3. 进入手机软件“电脑识别与记忆”页面，点击“允许一台新电脑配对”。应用会立即进入配对，请保持数据线连接。
->4. 配对成功，将会弹出名称和配置窗口，可自行填写或修改。
-
-* 连接到电脑：
->1. windows后端正在运行的前提下，手机与目标设备通过数据线连接，手机会自动验证电脑身份，并自动应用之前保存的配置。
->2. 若windows后端未运行，或手机未保存该设备，或鉴权失败，将正常弹出 USB 选择窗口。
-
-### 特别提醒
-当前主要适配目标是 AOSP、Google 原生及类原生系统。厂商可能修改或限制系统 USB 功能，应用内检测结果仅供参考，无法保证功能的稳定性。
-
-本方案不修改手机内核。
-
-若您不需要此实验性功能，可以不授予本应用 root 权限，这不会影响基础功能的正常运行。
-
-当前方案中鉴权端口即开即用、用完即关，端口的准备和开启时间较长，若启用本功能，从插入数据线到弹出窗口或正常应用配置的时间将显著增大，最长可达30秒。若您不接受，关闭此实验性功能即可。
-
-此实验性功能需要配套的 **[USBManagerWinBackEnd](https://github.com/TigerSpirit217/USBManagerWinBackEnd)** Windows 后端，其程序、说明和发布文件位于对应项目。
-
------
-
-</details>
+作者：**TigerSpirit217 & QWEOVO**
 
 ## 功能
 
-* **自动检测连接**：自动识别手机以设备模式连接电脑的事件。
-* **连接时选择模式**：支持仅充电、文件传输（MTP）、图片传输（PTP）、USB 网络共享（RNDIS）和 MIDI。
-* **ADB 一键开关**：在选择窗口中决定本次是否启用 USB 调试。
-* **OTG 不弹窗**：手机作为 USB 主机连接 U 盘、键鼠等设备时交给系统原生处理。
-* **拔线自动关闭 ADB**：可在设置中关闭；启用时，拔出数据线后自动关闭 USB 调试。
-* **锁屏延迟弹窗**：默认等待解锁后显示选择窗口，也可允许锁屏时弹出。
+- 连接电脑时选择仅充电、MTP 文件传输、PTP 图片传输、RNDIS 网络共享或 MIDI，并控制 ADB。
+- 保存可信电脑及其 USB 配置；识别成功后自动应用并发送静默通知。
+- 修改当前已识别电脑的配置后立即尝试应用；其他电脑的配置在下次连接时使用。
+- 分别报告“电脑已保存”和“USB 配置已应用”，避免将配置失败误报为配对失败。
+- APP 内提供“卸载并重启”，通过模块执行清理与重启。
 
-## 安装
+## 运行要求与限制
 
-### 前置条件
+- Android 8.0+，已安装 Magisk 或 KernelSU 并允许模块启动脚本运行。
+- 内核需提供 USB Gadget ConfigFS、FunctionFS 和可用物理 UDC。
+- 电脑识别需要 Windows 端 USBManagerWinBackEnd 配套程序运行；本仓库包含 Android APP 和 root 模块，不包含 Windows 后端。
+- 基础条件检测是只读检查，不代表所有 ROM 都能成功枚举或恢复 USB；需要实际配对验证。
+- 厂商 HAL、SELinux、USB 控制器行为不同，不保证所有机型兼容。建议先保存数据并保留模块管理器的恢复途径。
+- 仅充电常规切换失败时会尝试解绑物理 UDC；切回数据模式时按已准备好的接口尝试重新绑定。
+- 电脑身份认证并非手机与电脑的双向长期身份认证。
 
-* 已解锁 Bootloader 并取得 root 的 Android 设备。
+## 安装与使用
 
-* 已安装 **LSPosed** 框架。
+1. 在 Magisk / KernelSU 管理器中安装模块 ZIP，然后重启。不用于第三方 Recovery 刷入。
+2. 打开 APP。Android 13+ 首次启动申请通知权限；拒绝通知不影响 USB 管理，可在首页进入通知设置。
+3. 在电脑识别页面检查基础条件，开启识别，并在 Windows 后端运行时发起配对。
+4. 选择并保存电脑的 USB 模式及 ADB 配置。再次连接后自动使用保存的配置。
 
-* Android 11 或更高版本，推荐 Android 12+。
+**安装脚本会先卸载同包名旧 APP，再安装新 APP。** APP 设置和通知授权会清除，模块设置也会重置；已保存电脑记录保留。升级后请重新检查通知权限和识别开关。
 
-### 步骤
+## 卸载
 
-1. 从 [Releases](../../releases) 下载最新 APK。
-2. 安装 APK。
-3. 在 **LSPosed Manager → 模块**中启用 **USBManager**。
-4. 作用域勾选 system（系统框架）。
-5. 重启设备。
-6. 打开 USBManager，确认模块检测显示正常。
+推荐使用 **APP → 卸载并重启 → 二次确认**。
 
-## 使用
+模块确认请求后 APP 退出；独立卸载脚本停止相关操作、卸载 APP、重置 USB 默认功能并关闭 ADB、删除本模块目录，然后重启。识别或配对忙时可能拒绝请求，界面显示错误原因。
 
-1. 插入连接电脑的数据线。
-2. 在 USB 选择窗口中选择模式和 ADB 状态。
-3. 点击「确定」应用。
+标准 `uninstall.sh` 也支持模块管理器调用，但不会在管理器流程内主动重启。保存的电脑身份和诊断资料默认保留在 `/data/adb`，不会删除其他模块或整个数据目录。ROM 重启后是否覆盖仅充电默认值需在目标设备验证。
 
-默认 USB 模式为**仅充电**，默认关闭 USB 调试；拔线自动关闭 ADB 默认开启，锁屏弹窗默认关闭。这些选项均可在应用主页修改。
+## 数据与通信
 
-## 构建
+| 内容 | 位置 |
+| --- | --- |
+| APP 与 root 的命令 / 回执 | `/data/user_de/<用户>/com.tiger.usbmanager/files/root_bridge` |
+| 电脑身份记录 | `/data/adb/usbmanager-auth/hosts` |
+| 模块设置与运行状态 | `/data/adb/usbmanager` |
+| 关键日志 | `/data/adb/usbmanager/logs` |
 
-    git clone https://github.com/TigerSpirit217/USBManager.git
-    cd USBManager
-    ./gradlew :app:assembleRelease
+APP 文件通信使用 Device Protected Storage，不依赖 sdcard。临时认证接口使用 FunctionFS / WinUSB；认证使用 ECDSA P-256、临时 ECDH、HKDF-SHA256 和 AES-GCM。认证结束后交还 USB，并应用保存的模式。
 
-## 调试
+## 日志
 
-可在 LSPosed Manager 的日志页面搜索 USBManager，或使用：
+默认保留服务启动、USB 连接、配对/识别结果、配置应用结果、卸载以及错误信息。不再逐步打印 gadget 快照、FunctionFS 事件和每条握手消息，也不在每次失败时自动生成大份诊断。
 
-    adb logcat -s USBManager
+`READY`、`AUTH_RESULT`、`BACKEND=` 等是内部状态协议，保留以免影响功能。已有日志文件不会自动删除；原有日志轮转仍保留。
 
-主要日志标记：
+需要排查时，在 root shell 手动运行：
 
-* **[WATCHER]**：USB 连接和选择流程。
-* **[AUTH]**：电脑识别流程。
-* **[RX]**：系统广播。
-* **[HOOK]**：模块加载。
-* **[CLIENT]**：应用与系统模块通信。
-* **[CONTROLLER]**：USB 模式和 ADB 应用。
+```sh
+sh /data/adb/modules/usbmanager_root/diagnose.sh
+```
+
+分享前请检查诊断文件中的设备标识与路径。开发排查可给脚本设置 `USBMANAGER_DEBUG=1`，启用 shell 详细日志；无需日常启用。
+
+## Windows 上构建
+
+需要 JDK 21+、Android SDK Platform / Build Tools 37 和 NDK 27.2.12479018；使用项目内 Gradle Wrapper。NDK 支持在 Windows 原生构建，无需 WSL。
+
+配置本地 Android SDK 路径后运行：
+
+```powershell
+.\gradlew.bat :app:assembleDebug
+.\tools\package-module.ps1 -SkipBuild
+```
+
+产物位于 `dist/USBManager-Root-v6.2-fix17.zip`。目前打包的是 **debug 签名 APK**，不是已配置正式签名的商用发布包。ZIP 包含 arm64-v8a / x86_64 原生库及许可证。
+
+## 回归检查
+
+```powershell
+.\tools\test-module-lifecycle.ps1
+.\tools\test-host-edit.ps1
+.\tools\test-interop.ps1
+```
+
+前两项需要 Git for Windows 的 Bash，采用模拟命令，不会实际卸载或重启设备。第三项还需要 .NET 8 SDK 和配套 Windows 后端源码，默认引用项目外的 `USBManagerWinBackEnd/Program.cs`；可通过 MSBuild 的 `BackendSource` 属性或同名环境变量指定源码绝对路径。
+
+测试不代替真机 USB 枚举、UI、通知或卸载验收。
+
+## 鸣谢
+
+感谢 **[TigerSpirit217](https://github.com/TigerSpirit217)** 提供原始 [USBManager](https://github.com/TigerSpirit217/USBManager) 项目及相关实现基础。本仓库在其基础上维护不依赖 LSPosed 的 root 模块方案，并保留原项目历史与许可证。
 
 ## 许可证
 
-本项目使用木兰公共许可证，第 2 版（Mulan PubL v2）。完整授权见 [LICENSE](https://license.coscl.org.cn/MulanPubL-2.0)。
-
-## 源码与发布
-
-* 源码仓库：<https://github.com/TigerSpirit217/USBManager>
-* 发布页面：<https://github.com/TigerSpirit217/USBManager/releases>
-* 问题反馈：<https://github.com/TigerSpirit217/USBManager/issues>
+使用 **木兰公共许可证，第 2 版（MulanPubL-2.0）**，详见 [LICENSE](LICENSE)。保留原项目版权及许可声明。

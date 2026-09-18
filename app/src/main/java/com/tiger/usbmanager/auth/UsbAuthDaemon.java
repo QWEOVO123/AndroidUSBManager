@@ -32,8 +32,11 @@ public final class UsbAuthDaemon {
         }
         b.put((byte)0).putInt(35).putShort((short)1).putShort((short)4).putShort((short)1);
         b.put((byte)0).put((byte)1).put(new byte[]{'W','I','N','U','S','B',0,0}).put(new byte[14]);
-        byte[] name = "DeviceInterfaceGUID\0".getBytes(StandardCharsets.US_ASCII);
-        byte[] value = (INTERFACE_GUID + "\0").getBytes(StandardCharsets.US_ASCII);
+        // FunctionFS consumes UTF-8 here; the kernel converts it to UTF-16LE on
+        // the USB wire (f_fs.c / u_os_desc.h). Pre-encoding UTF-16 makes Windows
+        // see a property named only "D" with value "{".
+        byte[] name = "DeviceInterfaceGUID\0".getBytes(StandardCharsets.UTF_8);
+        byte[] value = (INTERFACE_GUID + "\0").getBytes(StandardCharsets.UTF_8);
         int size = 14 + name.length + value.length;
         b.put((byte)0).putInt(11 + size).putShort((short)1).putShort((short)5).putShort((short)1);
         b.putInt(size).putInt(1).putShort((short)name.length).put(name).putInt(value.length).put(value);
@@ -126,25 +129,38 @@ public final class UsbAuthDaemon {
         private String hostPublic, hostEphemeral, pcNonce, label;
         private byte[] transcript, sessionKey;
         private long issued;
+        private String pendingResult;
 
         Session(Path hosts, Path result, boolean allowPair, String pairingProfile) throws IOException {
             this.pairingProfile = pairingProfile;
             this.hosts = hosts; this.result = result; this.allowPair = allowPair; Files.createDirectories(hosts);
         }
 
-        void reset() { sessionKey = null; transcript = null; }
+        void reset() {
+            if (sessionKey != null) Arrays.fill(sessionKey, (byte)0);
+            sessionKey = null; transcript = null;
+            pendingResult = null;
+        }
 
         private void writeResult(String status, String id, String displayLabel) throws IOException {
             String line = status + "|" + id + "|" + b64(displayLabel.getBytes(StandardCharsets.UTF_8)) + profileFields(authenticated) + "\n";
+            pendingResult = line;
+        }
+
+        void responseSent() throws IOException {
+            if (pendingResult == null) return;
             Path temp = result.resolveSibling(result.getFileName() + ".tmp");
-            Files.write(temp, line.getBytes(StandardCharsets.US_ASCII), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            Files.write(temp, pendingResult.getBytes(StandardCharsets.US_ASCII), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
             Files.move(temp, result, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            pendingResult = null;
         }
 
         String handle(String request) {
+            pendingResult = null;
             try {
                 String[] fields = request.split(" ", -1);
                 if (fields.length == 5 && fields[0].equals("HELLO2")) {
+                    reset();
                     hostPublic = fields[1]; hostEphemeral = fields[2]; pcNonce = fields[3];
                     label = new String(unb64(fields[4]), StandardCharsets.UTF_8);
                     if (!label.matches("[\\p{L}\\p{N} _.-]{1,64}")) return "ERROR2 LABEL";
@@ -181,11 +197,15 @@ public final class UsbAuthDaemon {
                         authenticated = readHost(file);
                         label = authenticated.getProperty("label", label);
                         authenticated.setProperty("lastSeen", Long.toString(System.currentTimeMillis()));
+                        if (allowPair && action.equals("PAIR")) {
+                            setProfile(authenticated, pairingProfile);
+                            allowPair = false;
+                        }
                         saveHost(file, authenticated);
                         status = "KNOWN " + id + " " + b64(label.getBytes(StandardCharsets.UTF_8));
                     }
                     else if (!action.equals("PAIR")) status = "UNKNOWN " + id;
-                    else if (!allowPair) status = "ERROR PAIRING_CLOSED";
+                    else if (!allowPair) status = "UNKNOWN " + id;
                     else {
                         Properties properties = new Properties();
                         properties.setProperty("label", label);
@@ -207,6 +227,7 @@ public final class UsbAuthDaemon {
                 }
                 return "ERROR2 FORMAT";
             } catch (Exception error) {
+                System.err.println("AUTH_ERROR " + error.getClass().getSimpleName());
                 return "ERROR2 INVALID";
             }
         }
@@ -240,12 +261,13 @@ public final class UsbAuthDaemon {
                 byte[] frame = nativeReceive();
                 if (nativeGeneration() != generation) { session.reset(); generation = nativeGeneration(); }
                 int length = 0; while (length < frame.length && frame[length] != 0) length++;
-                String response = session.handle(new String(frame, 0, length, StandardCharsets.US_ASCII));
+                String request = new String(frame, 0, length, StandardCharsets.US_ASCII);
+                String response = session.handle(request);
                 byte[] output = new byte[4096], payload = response.getBytes(StandardCharsets.US_ASCII);
                 if (payload.length >= output.length) throw new IOException("response too large");
                 System.arraycopy(payload, 0, output, 0, payload.length);
                 nativeSend(output);
-                System.out.println("SENT " + response.split(" ", 2)[0]); System.out.flush();
+                session.responseSent();
             } catch (IOException disconnected) {
                 session.reset(); Thread.sleep(200);
             }

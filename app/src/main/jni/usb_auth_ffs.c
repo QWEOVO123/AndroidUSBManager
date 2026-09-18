@@ -12,6 +12,10 @@ static int ep0 = -1, ep_out = -1, ep_in = -1;
 static atomic_long generation_value = 0;
 static atomic_int enabled = 0;
 
+static void log_event(const char *name) {
+    (void) name;
+}
+
 static void throw_io(JNIEnv *env, const char *operation) {
     char message[256];
     snprintf(message, sizeof(message), "%s: %s", operation, strerror(errno));
@@ -38,10 +42,15 @@ static void *read_events(void *unused) {
             continue;
         }
         for (size_t i = 0; i < (size_t) count / sizeof(events[0]); i++) {
-            if (events[i].type == FUNCTIONFS_ENABLE) atomic_store(&enabled, 1);
+            if (events[i].type == FUNCTIONFS_BIND) log_event("BIND");
+            if (events[i].type == FUNCTIONFS_ENABLE) {
+                atomic_store(&enabled, 1);
+                log_event("ENABLE");
+            }
             if (events[i].type == FUNCTIONFS_DISABLE || events[i].type == FUNCTIONFS_UNBIND) {
                 atomic_store(&enabled, 0);
                 atomic_fetch_add(&generation_value, 1);
+                log_event(events[i].type == FUNCTIONFS_DISABLE ? "DISABLE" : "UNBIND");
             }
             if (events[i].type == FUNCTIONFS_SETUP) {
                 char ignored = 0;
